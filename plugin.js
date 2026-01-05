@@ -1,22 +1,29 @@
 /**
  * CalDAV Schedule Sync Plugin for Super Productivity
- * 
- * Synchronisiert geplante Tasks zu einem CalDAV-Kalender.
- * - Tasks mit plannedAt (scheduled date) ODER
- * - Tasks mit dueWithTime (due date + time)
- * 
- * Nur Tasks ohne issueProviderId werden synchronisiert (keine importierten Tasks).
- * Änderungen an Tasks (Titel, Zeit, Beschreibung) werden automatisch synchronisiert.
- * 
- * KONFIGURATION:
- * Passe die caldavConfig unten an deine CalDAV-Server Einstellungen an.
+ *
+ * Automatically synchronizes scheduled tasks to a CalDAV calendar.
+ *
+ * FEATURES:
+ * - Tasks with plannedAt (scheduled date) are synced as timed events
+ * - Tasks with dueWithTime (due date + time) are synced as timed events
+ * - Tasks with dueDay (due date only) are synced as all-day events
+ * - All tasks are synchronized, including imported ones from Jira/GitHub/etc.
+ * - Changes to tasks (title, time, description) are automatically propagated
+ * - Deleted or completed tasks are removed from the calendar
+ *
+ * CONFIGURATION:
+ * Use the Settings UI (Side Panel → "CalDAV Settings") to configure.
+ * No manual code editing required!
+ *
+ * DEBUG:
+ * Use window.CalDAVSync.* functions in the browser console for debugging.
  */
 
 // ============================================================================
 // Configuration & State
 // ============================================================================
 
-// CalDAV Konfiguration (wird aus Settings-UI geladen)
+// CalDAV Configuration (loaded from Settings UI)
 let caldavConfig = {
   username: '',
   password: '',
@@ -24,7 +31,7 @@ let caldavConfig = {
   enabled: false
 };
 
-// Mapping: { taskId: eventUid }
+// Mapping: { taskId: eventUid } - Tracks which Super Productivity task corresponds to which CalDAV event
 let taskEventMapping = {};
 
 // ============================================================================
@@ -32,61 +39,62 @@ let taskEventMapping = {};
 // ============================================================================
 
 /**
- * Erstellt oder aktualisiert ein CalDAV Event für einen Task
+ * Creates or updates a CalDAV event for a task
  */
 async function syncTaskToCalDAV(task) {
   if (!caldavConfig.enabled) {
-    console.log('[CalDAV Sync] Plugin ist deaktiviert');
+    console.log('[CalDAV Sync] Plugin is disabled');
     return;
   }
 
-  // Prüfe ob Task synchronisiert werden soll
+  // Check if task should be synchronized
   if (!shouldSyncTask(task)) {
-    console.log('[CalDAV Sync] Task wird übersprungen:', task.id, task.title);
+    console.log('[CalDAV Sync] Task skipped:', task.id, task.title);
     return;
   }
 
   try {
-    // WICHTIG: UID muss konsistent sein mit der UID im iCalendar Event!
+    // IMPORTANT: UID must be consistent with the UID in the iCalendar event!
     const eventUid = `sp-task-${task.id}`;
     const eventData = createEventFromTask(task);
 
-    console.log('[CalDAV Sync] Synchronisiere Task:', task.id, task.title);
+    console.log('[CalDAV Sync] Synchronizing task:', task.id, task.title);
     console.log('[CalDAV Sync] Event UID:', eventUid);
 
-    // Event zum Kalender pushen
+    // Push event to calendar
     await putCalDAVEvent(eventUid, eventData);
 
-    // Mapping speichern
+    // Save mapping
     taskEventMapping[task.id] = eventUid;
     await saveData();
-    
-    console.log('[CalDAV Sync] Task erfolgreich synchronisiert:', task.id);
-    console.log('[CalDAV Sync] Mapping gespeichert - Einträge:', Object.keys(taskEventMapping).length);
-    
+
+    console.log('[CalDAV Sync] Task successfully synchronized:', task.id);
+    console.log('[CalDAV Sync] Mapping saved - entries:', Object.keys(taskEventMapping).length);
+
     PluginAPI.showSnack({
-      msg: `"${task.title}" zum Kalender synchronisiert`,
+      msg: `"${task.title}" synchronized to calendar`,
       type: 'SUCCESS'
     });
   } catch (error) {
-    console.error('[CalDAV Sync] Fehler beim Synchronisieren:', error);
+    console.error('[CalDAV Sync] Error synchronizing:', error);
     PluginAPI.showSnack({
-      msg: `Fehler beim Synchronisieren: ${error.message}`,
+      msg: `Error synchronizing: ${error.message}`,
       type: 'ERROR'
     });
   }
 }
 
 /**
- * Prüft ob ein Task synchronisiert werden soll
+ * Checks if a task should be synchronized
+ * Returns true if the task has a scheduled date, due date with time, or due date only
  */
 function shouldSyncTask(task) {
-  // Task muss plannedAt (scheduled) ODER dueWithTime (due + time) ODER dueDay (nur Datum) haben
+  // Task must have plannedAt (scheduled) OR dueWithTime (due + time) OR dueDay (date only)
   if (!task.plannedAt && !task.dueWithTime && !task.dueDay) {
     return false;
   }
 
-  // Task darf nicht done sein
+  // Task must not be completed
   if (task.isDone) {
     return false;
   }
@@ -95,41 +103,42 @@ function shouldSyncTask(task) {
 }
 
 /**
- * Erstellt iCalendar Event-Daten aus einem Task
+ * Creates iCalendar event data from a task
+ * Supports both timed events and all-day events
  */
 function createEventFromTask(task) {
-  // Prüfe ob Task eine Zeit hat oder nur ein Datum
+  // Check if task has a time or only a date
   const hasTime = task.plannedAt || task.dueWithTime;
   const hasOnlyDate = !hasTime && task.dueDay;
 
   let dtstart, dtend;
 
   if (hasTime) {
-    // Task hat Zeit → Zeitgebundenes Event
+    // Task has time → Timed event
     const timestamp = task.plannedAt || task.dueWithTime;
     const startDate = new Date(timestamp);
 
-    // Berechne End-Datum basierend auf timeEstimate (in ms)
-    const duration = task.timeEstimate || 3600000; // Default: 1 Stunde
+    // Calculate end date based on timeEstimate (in ms)
+    const duration = task.timeEstimate || 3600000; // Default: 1 hour
     const endDate = new Date(startDate.getTime() + duration);
 
     dtstart = `DTSTART:${formatICalDateTimeUTC(startDate)}`;
     dtend = `DTEND:${formatICalDateTimeUTC(endDate)}`;
   } else if (hasOnlyDate) {
-    // Task hat nur Datum → Ganztägiges Event
-    // dueDay Format: "YYYY-MM-DD"
+    // Task has only date → All-day event
+    // dueDay format: "YYYY-MM-DD"
     const dateOnly = task.dueDay.replace(/-/g, ''); // "2026-01-03" → "20260103"
 
-    // Ganztägige Events: DTSTART;VALUE=DATE und DTEND ist nächster Tag
+    // All-day events: DTSTART;VALUE=DATE and DTEND is same day
     dtstart = `DTSTART;VALUE=DATE:${dateOnly}`;
-    dtend = `DTEND;VALUE=DATE:${dateOnly}`; // Bei ganztägigen Events ist End = Start (ein Tag)
+    dtend = `DTEND;VALUE=DATE:${dateOnly}`; // For all-day events End = Start (one day)
   }
 
-  // Erstelle iCalendar VEVENT
+  // Create iCalendar VEVENT
   const event = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//Super Productivity//CalDAV Sync Plugin//DE',
+    'PRODID:-//Super Productivity//CalDAV Sync Plugin//EN',
     'BEGIN:VEVENT',
     `UID:sp-task-${task.id}`,
     `DTSTAMP:${formatICalDateTimeUTC(new Date())}`,
@@ -147,7 +156,7 @@ function createEventFromTask(task) {
 }
 
 /**
- * Formatiert ein Date-Objekt als iCalendar DateTime in UTC
+ * Formats a Date object as iCalendar DateTime in UTC
  */
 function formatICalDateTimeUTC(date) {
   const year = date.getUTCFullYear();
@@ -161,7 +170,7 @@ function formatICalDateTimeUTC(date) {
 }
 
 /**
- * Escaped iCalendar Text (Kommas, Semikolons, Backslashes)
+ * Escapes iCalendar text (commas, semicolons, backslashes)
  */
 function escapeICalText(text) {
   if (!text) return '';
@@ -173,13 +182,13 @@ function escapeICalText(text) {
 }
 
 /**
- * Sendet ein Event per PUT an den CalDAV Server
+ * Sends an event via PUT to the CalDAV server
  */
 async function putCalDAVEvent(eventUid, eventData) {
   const eventUrl = `${caldavConfig.calendarUrl}${eventUid}.ics`;
-  
-  console.log('[CalDAV Sync] PUT Request an:', eventUrl);
-  
+
+  console.log('[CalDAV Sync] PUT request to:', eventUrl);
+
   const response = await fetch(eventUrl, {
     method: 'PUT',
     headers: {
@@ -188,38 +197,38 @@ async function putCalDAVEvent(eventUid, eventData) {
     },
     body: eventData
   });
-  
+
   console.log('[CalDAV Sync] PUT Response Status:', response.status, response.statusText);
-  
+
   if (!response.ok) {
     const errorText = await response.text();
-    console.error('[CalDAV Sync] PUT Fehler-Details:', errorText);
+    console.error('[CalDAV Sync] PUT error details:', errorText);
     throw new Error(`CalDAV PUT failed: ${response.status} ${response.statusText}`);
   }
-  
-  console.log('[CalDAV Sync] PUT erfolgreich');
+
+  console.log('[CalDAV Sync] PUT successful');
 }
 
 /**
- * Löscht ein Event vom CalDAV Server
+ * Deletes an event from the CalDAV server
  */
 async function deleteCalDAVEvent(eventUid) {
-  console.log('[CalDAV Sync] >>> deleteCalDAVEvent() gestartet <<<');
+  console.log('[CalDAV Sync] >>> deleteCalDAVEvent() started <<<');
   console.log('[CalDAV Sync] Event UID:', eventUid);
   console.log('[CalDAV Sync] Plugin enabled:', caldavConfig.enabled);
 
   if (!caldavConfig.enabled) {
-    console.log('[CalDAV Sync] ⚠️ DELETE übersprungen - Plugin deaktiviert');
+    console.log('[CalDAV Sync] ⚠️ DELETE skipped - plugin disabled');
     return;
   }
 
   const eventUrl = `${caldavConfig.calendarUrl}${eventUid}.ics`;
   console.log('[CalDAV Sync] DELETE Request URL:', eventUrl);
   console.log('[CalDAV Sync] Username:', caldavConfig.username);
-  console.log('[CalDAV Sync] Hat Password:', !!caldavConfig.password);
+  console.log('[CalDAV Sync] Has password:', !!caldavConfig.password);
 
   try {
-    console.log('[CalDAV Sync] Sende DELETE Request...');
+    console.log('[CalDAV Sync] Sending DELETE request...');
     const response = await fetch(eventUrl, {
       method: 'DELETE',
       headers: {
@@ -234,46 +243,46 @@ async function deleteCalDAVEvent(eventUid) {
     console.log('[CalDAV Sync] DELETE Response Body:', responseText);
 
     if (!response.ok && response.status !== 404) {
-      console.warn('[CalDAV Sync] ⚠️ DELETE Warnung:', response.status, response.statusText);
-      // Werfe keinen Fehler, logge nur
+      console.warn('[CalDAV Sync] ⚠️ DELETE warning:', response.status, response.statusText);
+      // Don't throw error, just log
     } else {
-      console.log('[CalDAV Sync] ✅ DELETE erfolgreich oder Event existierte nicht (404)');
+      console.log('[CalDAV Sync] ✅ DELETE successful or event did not exist (404)');
     }
   } catch (error) {
-    console.error('[CalDAV Sync] ❌ DELETE Fehler:', error);
-    throw error; // Werfe Fehler weiter für besseres Error Handling
+    console.error('[CalDAV Sync] ❌ DELETE error:', error);
+    throw error; // Re-throw error for better error handling
   }
 }
 
 // ============================================================================
 // Persistence
 // ============================================================================
-// WICHTIG: persistDataSynced() und loadSyncedData() akzeptieren KEINEN Key!
-// Es gibt nur einen einzigen Persistence-Slot pro Plugin.
-// Wir speichern daher Config und Mapping zusammen in einem Objekt.
+// IMPORTANT: persistDataSynced() and loadSyncedData() accept NO key parameter!
+// There is only one persistence slot per plugin.
+// We therefore store Config and Mapping together in one object.
 
 /**
- * Lädt gespeicherte Daten (Config + Mapping) aus dem Plugin-Storage
+ * Loads saved data (Config + Mapping) from the plugin storage
  */
 async function loadData() {
   try {
-    console.log('[CalDAV Sync] Lade Plugin-Daten...');
+    console.log('[CalDAV Sync] Loading plugin data...');
 
     const dataString = await PluginAPI.loadSyncedData();
-    console.log('[CalDAV Sync] Geladener String:', dataString);
+    console.log('[CalDAV Sync] Loaded string:', dataString);
 
     if (!dataString || typeof dataString !== 'string') {
-      console.log('[CalDAV Sync] ⚠️ Keine gespeicherten Daten gefunden - verwende Defaults');
+      console.log('[CalDAV Sync] ⚠️ No saved data found - using defaults');
       return;
     }
 
     const data = JSON.parse(dataString);
-    console.log('[CalDAV Sync] Geparste Daten:', data);
+    console.log('[CalDAV Sync] Parsed data:', data);
 
-    // Lade Config
+    // Load config
     if (data.config && typeof data.config === 'object') {
       caldavConfig = data.config;
-      console.log('[CalDAV Sync] ✅ Config geladen:', {
+      console.log('[CalDAV Sync] ✅ Config loaded:', {
         enabled: caldavConfig.enabled,
         hasUrl: !!caldavConfig.calendarUrl,
         hasUsername: !!caldavConfig.username,
@@ -281,19 +290,19 @@ async function loadData() {
       });
     }
 
-    // Lade Mapping
+    // Load mapping
     if (data.mapping && typeof data.mapping === 'object') {
       taskEventMapping = data.mapping;
-      console.log('[CalDAV Sync] ✅ Mapping geladen:', Object.keys(taskEventMapping).length, 'Einträge');
+      console.log('[CalDAV Sync] ✅ Mapping loaded:', Object.keys(taskEventMapping).length, 'entries');
     }
   } catch (error) {
-    console.error('[CalDAV Sync] ❌ Fehler beim Laden:', error);
-    // Bei Fehler: Defaults beibehalten
+    console.error('[CalDAV Sync] ❌ Error loading:', error);
+    // On error: keep defaults
   }
 }
 
 /**
- * Speichert Config und Mapping zusammen in den Plugin-Storage
+ * Saves Config and Mapping together to the plugin storage
  */
 async function saveData() {
   try {
@@ -303,12 +312,12 @@ async function saveData() {
     };
 
     const dataString = JSON.stringify(data);
-    console.log('[CalDAV Sync] Speichere Plugin-Daten:', data);
+    console.log('[CalDAV Sync] Saving plugin data:', data);
 
     await PluginAPI.persistDataSynced(dataString);
-    console.log('[CalDAV Sync] ✅ Daten erfolgreich gespeichert');
+    console.log('[CalDAV Sync] ✅ Data successfully saved');
   } catch (error) {
-    console.error('[CalDAV Sync] ❌ Fehler beim Speichern:', error);
+    console.error('[CalDAV Sync] ❌ Error saving:', error);
     throw error;
   }
 }
@@ -319,10 +328,11 @@ async function saveData() {
 
 
 /**
- * Wird aufgerufen wenn ein Task aktualisiert wird
+ * Called when a task is updated
+ * Syncs the task to CalDAV or removes it if no longer scheduled
  */
 async function onTaskUpdate(taskIdOrObject) {
-  // WICHTIG: Super Productivity übergibt manchmal {taskId: 'xxx'} statt nur die ID!
+  // IMPORTANT: Super Productivity sometimes passes {taskId: 'xxx'} instead of just the ID!
   const taskId = typeof taskIdOrObject === 'object' ? taskIdOrObject.taskId : taskIdOrObject;
 
   console.log('[CalDAV Sync] ========================================');
@@ -335,7 +345,7 @@ async function onTaskUpdate(taskIdOrObject) {
   const task = tasks.find(t => t.id === taskId);
 
   if (task) {
-    console.log('[CalDAV Sync] Task gefunden:', {
+    console.log('[CalDAV Sync] Task found:', {
       id: task.id,
       title: task.title,
       plannedAt: task.plannedAt,
@@ -344,95 +354,97 @@ async function onTaskUpdate(taskIdOrObject) {
       isDone: task.isDone
     });
   }
-  
+
   if (!task) {
-    console.warn('[CalDAV Sync] Task nicht gefunden:', taskId);
+    console.warn('[CalDAV Sync] Task not found:', taskId);
     return;
   }
   
-  // Prüfe ob Task synchronisiert werden soll
+  // Check if task should be synchronized
   if (shouldSyncTask(task)) {
-    // Task ist sync-fähig → synchronisiere oder aktualisiere Event
+    // Task is syncable → synchronize or update event
     await syncTaskToCalDAV(task);
   } else {
-    // Task ist NICHT mehr sync-fähig → lösche Event falls vorhanden
-    // (z.B. wenn plannedAt/dueWithTime entfernt wurde, oder Task completed wurde)
+    // Task is NO longer syncable → delete event if it exists
+    // (e.g. when plannedAt/dueWithTime was removed, or task was completed)
     const eventUid = taskEventMapping[taskId] || `sp-task-${taskId}`;
 
-    console.log('[CalDAV Sync] Task nicht mehr synchronisierbar, lösche Event:', taskId);
+    console.log('[CalDAV Sync] Task no longer syncable, deleting event:', taskId);
 
     try {
       await deleteCalDAVEvent(eventUid);
 
-      // Entferne aus Mapping (falls vorhanden)
+      // Remove from mapping (if exists)
       if (taskEventMapping[taskId]) {
         delete taskEventMapping[taskId];
         await saveData();
       }
 
       PluginAPI.showSnack({
-        msg: `Event für "${task.title}" wurde entfernt (nicht mehr geplant)`,
+        msg: `Event for "${task.title}" removed (no longer scheduled)`,
         type: 'SUCCESS'
       });
     } catch (error) {
-      console.error('[CalDAV Sync] Fehler beim Löschen:', error);
-      // Fehler nicht anzeigen, da Task evtl. nie synchronisiert wurde
+      console.error('[CalDAV Sync] Error deleting:', error);
+      // Don't show error, as task might never have been synced
     }
   }
 }
 
 /**
- * Wird aufgerufen wenn ein Task gelöscht wird
+ * Called when a task is deleted
+ * Removes the corresponding CalDAV event
  */
 async function onTaskDelete(taskIdOrObject) {
-  // WICHTIG: Super Productivity übergibt manchmal {taskId: 'xxx'} statt nur die ID!
+  // IMPORTANT: Super Productivity sometimes passes {taskId: 'xxx'} instead of just the ID!
   const taskId = typeof taskIdOrObject === 'object' ? taskIdOrObject.taskId : taskIdOrObject;
 
   console.log('[CalDAV Sync] ========================================');
   console.log('[CalDAV Sync] onTaskDelete HOOK TRIGGERED!');
-  console.log('[CalDAV Sync] Task ID (extrahiert):', taskId);
-  console.log('[CalDAV Sync] Original Parameter:', taskIdOrObject);
-  console.log('[CalDAV Sync] Aktuelles Mapping:', taskEventMapping);
+  console.log('[CalDAV Sync] Task ID (extracted):', taskId);
+  console.log('[CalDAV Sync] Original parameter:', taskIdOrObject);
+  console.log('[CalDAV Sync] Current mapping:', taskEventMapping);
   console.log('[CalDAV Sync] ========================================');
 
-  // Versuche UID aus Mapping zu holen, falls nicht vorhanden nutze Standard-UID
+  // Try to get UID from mapping, use standard UID if not found
   const eventUid = taskEventMapping[taskId] || `sp-task-${taskId}`;
 
-  console.log('[CalDAV Sync] Event UID die gelöscht werden soll:', eventUid);
+  console.log('[CalDAV Sync] Event UID to be deleted:', eventUid);
   console.log('[CalDAV Sync] CalDAV enabled?', caldavConfig.enabled);
 
   try {
     await deleteCalDAVEvent(eventUid);
 
-    // Entferne aus Mapping (falls vorhanden)
+    // Remove from mapping (if exists)
     if (taskEventMapping[taskId]) {
       delete taskEventMapping[taskId];
       await saveData();
     }
 
-    console.log('[CalDAV Sync] Event erfolgreich gelöscht für Task:', taskId);
+    console.log('[CalDAV Sync] Event successfully deleted for task:', taskId);
 
     PluginAPI.showSnack({
-      msg: 'Task aus Kalender entfernt',
+      msg: 'Task removed from calendar',
       type: 'SUCCESS'
     });
   } catch (error) {
-    console.error('[CalDAV Sync] Fehler beim Löschen des Events:', error);
+    console.error('[CalDAV Sync] Error deleting event:', error);
     PluginAPI.showSnack({
-      msg: `Fehler beim Löschen aus Kalender: ${error.message}`,
+      msg: `Error removing from calendar: ${error.message}`,
       type: 'ERROR'
     });
   }
 }
 
 /**
- * Wird aufgerufen wenn ein Task completed wird
+ * Called when a task is completed
+ * Removes the event from the calendar
  */
 async function onTaskComplete(taskIdOrObject) {
-  // WICHTIG: Super Productivity übergibt manchmal {taskId: 'xxx'} statt nur die ID!
+  // IMPORTANT: Super Productivity sometimes passes {taskId: 'xxx'} instead of just the ID!
   const taskId = typeof taskIdOrObject === 'object' ? taskIdOrObject.taskId : taskIdOrObject;
 
-  // Optional: Event auch löschen wenn Task completed wird
+  // Delete event when task is completed
   await onTaskDelete(taskId);
 }
 
@@ -441,57 +453,57 @@ async function onTaskComplete(taskIdOrObject) {
 // ============================================================================
 
 async function init() {
-  console.log('[CalDAV Sync] Plugin wird initialisiert...');
+  console.log('[CalDAV Sync] Plugin initializing...');
 
-  // Lade gespeicherte Daten (Config + Mapping)
+  // Load saved data (Config + Mapping)
   await loadData();
-  
-  // Extra Sicherheitscheck: Stelle sicher dass taskEventMapping ein Objekt ist
+
+  // Extra safety check: Ensure taskEventMapping is an object
   if (typeof taskEventMapping !== 'object' || Array.isArray(taskEventMapping)) {
-    console.warn('[CalDAV Sync] taskEventMapping ist kein valides Objekt, initialisiere neu');
+    console.warn('[CalDAV Sync] taskEventMapping is not a valid object, reinitializing');
     taskEventMapping = {};
   }
-  
-  console.log('[CalDAV Sync] Config geladen:', {
+
+  console.log('[CalDAV Sync] Config loaded:', {
     enabled: caldavConfig.enabled,
     hasUrl: !!caldavConfig.calendarUrl,
     hasUsername: !!caldavConfig.username,
     hasPassword: !!caldavConfig.password
   });
-  
-  console.log('[CalDAV Sync] Task-Event-Mapping:', Object.keys(taskEventMapping).length, 'Einträge');
-  
-  // Registriere Event Hooks
-  // WICHTIG: ANY_TASK_UPDATE statt TASK_UPDATE - triggert bei ALLEN Änderungen (inkl. Zeit)
+
+  console.log('[CalDAV Sync] Task-Event-Mapping:', Object.keys(taskEventMapping).length, 'entries');
+
+  // Register event hooks
+  // IMPORTANT: ANY_TASK_UPDATE instead of TASK_UPDATE - triggers for ALL changes (incl. time)
   PluginAPI.registerHook(PluginAPI.Hooks.TASK_UPDATE, onTaskUpdate);
   PluginAPI.registerHook(PluginAPI.Hooks.TASK_DELETE, onTaskDelete);
   PluginAPI.registerHook(PluginAPI.Hooks.TASK_COMPLETE, onTaskComplete);
-  
-  // Registriere Menü-Eintrag für Settings
+
+  // Register side panel button for settings
   PluginAPI.registerSidePanelButton({
-    label: 'CalDAV Einstellungen Side Panel',
+    label: 'CalDAV Settings',
     icon: 'settings',
     onClick: () => {
-      console.log('[CalDAV Sync] Settings-Menü geöffnet');
+      console.log('[CalDAV Sync] Settings menu opened');
     },
     onRightClick: () => {
-      console.log('[CalDAV Sync] Settings-Menü Rechtsklick geöffnet');
+      console.log('[CalDAV Sync] Settings menu right-click opened');
     }
   });
 
-  // Registriere Sync Button
+  // Register sync button
   PluginAPI.registerHeaderButton({
     label: 'CalDAV Sync',
     icon: 'cloud_upload',
     onRightClick: () => {
-      console.log('[CalDAV Sync] Button Rechtsklick');
+      console.log('[CalDAV Sync] Button right-click');
     },
     onClick: async () => {
-      console.log('[CalDAV Sync] Button wurde geklickt');
-      
+      console.log('[CalDAV Sync] Button clicked');
+
       if (!caldavConfig.enabled) {
         PluginAPI.showSnack({
-          msg: 'CalDAV Sync ist deaktiviert. Aktiviere es in den CalDAV Einstellungen (Menü)',
+          msg: 'CalDAV Sync is disabled. Enable it in CalDAV Settings',
           type: 'ERROR'
         });
         return;
@@ -499,53 +511,53 @@ async function init() {
 
       if (!caldavConfig.calendarUrl || !caldavConfig.username || !caldavConfig.password) {
         PluginAPI.showSnack({
-          msg: 'CalDAV Konfiguration unvollständig! Öffne CalDAV Einstellungen im Menü',
+          msg: 'CalDAV configuration incomplete! Open CalDAV Settings',
           type: 'ERROR'
         });
         return;
       }
-      
-      try {
-        // Manuelle Sync aller geplanten Tasks
-        console.log('[CalDAV Sync] Lade Tasks...');
-        const tasks = await PluginAPI.getTasks();
-        console.log('[CalDAV Sync] Tasks geladen:', tasks.length);
 
-        // Cleanup: Entferne Mappings für Tasks die nicht mehr geplant sind
+      try {
+        // Manual sync of all scheduled tasks
+        console.log('[CalDAV Sync] Loading tasks...');
+        const tasks = await PluginAPI.getTasks();
+        console.log('[CalDAV Sync] Tasks loaded:', tasks.length);
+
+        // Cleanup: Remove mappings for tasks that are no longer scheduled
         const taskIds = new Set(tasks.map(t => t.id));
         const scheduledTaskIds = new Set(tasks.filter(shouldSyncTask).map(t => t.id));
 
         let cleanedUp = 0;
         for (const taskId in taskEventMapping) {
-          // Wenn Task noch existiert aber nicht mehr geplant ist, räume auf
+          // If task still exists but is no longer scheduled, clean up
           if (taskIds.has(taskId) && !scheduledTaskIds.has(taskId)) {
-            console.log('[CalDAV Sync] Cleanup: Task nicht mehr geplant, lösche Event:', taskId);
+            console.log('[CalDAV Sync] Cleanup: Task no longer scheduled, deleting event:', taskId);
             try {
               await deleteCalDAVEvent(taskEventMapping[taskId]);
               delete taskEventMapping[taskId];
               cleanedUp++;
             } catch (error) {
-              console.error('[CalDAV Sync] Fehler beim Cleanup:', error);
+              console.error('[CalDAV Sync] Cleanup error:', error);
             }
           }
         }
 
         if (cleanedUp > 0) {
           await saveData();
-          console.log(`[CalDAV Sync] ✅ ${cleanedUp} ungeplante(s) Event(s) aufgeräumt`);
+          console.log(`[CalDAV Sync] ✅ ${cleanedUp} unscheduled event(s) cleaned up`);
         }
 
         const tasksToSync = tasks.filter(shouldSyncTask);
-        console.log('[CalDAV Sync] Tasks zum Synchronisieren:', tasksToSync.length);
-        
+        console.log('[CalDAV Sync] Tasks to synchronize:', tasksToSync.length);
+
         if (tasksToSync.length === 0) {
           PluginAPI.showSnack({
-            msg: 'Keine geplanten Tasks zum Synchronisieren gefunden',
+            msg: 'No scheduled tasks to synchronize found',
             type: 'SUCCESS'
           });
           return;
         }
-        
+
         let syncedCount = 0;
         let errorCount = 0;
 
@@ -554,45 +566,45 @@ async function init() {
             await syncTaskToCalDAV(task);
             syncedCount++;
 
-            // Rate-Limiting: 300ms Verzögerung zwischen Requests (verhindert HTTP 429)
+            // Rate-limiting: 300ms delay between requests (prevents HTTP 429)
             if (syncedCount < tasksToSync.length) {
               await new Promise(resolve => setTimeout(resolve, 300));
             }
           } catch (error) {
-            console.error('[CalDAV Sync] Fehler beim Synchronisieren von Task:', task.id, error);
+            console.error('[CalDAV Sync] Error synchronizing task:', task.id, error);
             errorCount++;
           }
         }
-        
+
         PluginAPI.showSnack({
-          msg: `${syncedCount} Tasks synchronisiert, ${errorCount} Fehler`,
+          msg: `${syncedCount} tasks synchronized, ${errorCount} errors`,
           type: errorCount === 0 ? 'SUCCESS' : 'ERROR'
         });
       } catch (error) {
-        console.error('[CalDAV Sync] Fehler:', error);
+        console.error('[CalDAV Sync] Error:', error);
         PluginAPI.showSnack({
-          msg: `Fehler beim Synchronisieren: ${error.message}`,
+          msg: `Error synchronizing: ${error.message}`,
           type: 'ERROR'
         });
       }
     }
   });
   
-  console.log('[CalDAV Sync] Plugin erfolgreich initialisiert');
+  console.log('[CalDAV Sync] Plugin successfully initialized');
 
-  // Listener für postMessage vom Settings-iframe
+  // Listener for postMessage from settings iframe
   window.addEventListener('message', async (event) => {
-    console.log('[CalDAV Sync] postMessage empfangen:', event.data);
+    console.log('[CalDAV Sync] postMessage received:', event.data);
 
     if (!event.data || event.data.pluginId !== 'caldav-sync') {
-      console.log('[CalDAV Sync] Ignoriere Message (nicht für dieses Plugin)');
+      console.log('[CalDAV Sync] Ignoring message (not for this plugin)');
       return;
     }
 
     if (event.data.type === 'REQUEST_CONFIG') {
-      console.log('[CalDAV Sync] ✅ Config-Anfrage vom iframe erhalten, sende Config...');
+      console.log('[CalDAV Sync] ✅ Config request from iframe received, sending config...');
 
-      // Sende Config zurück an iframe
+      // Send config back to iframe
       event.source.postMessage({
         type: 'CONFIG_RESPONSE',
         config: caldavConfig
@@ -600,33 +612,33 @@ async function init() {
     }
 
     if (event.data.type === 'SAVE_CONFIG') {
-      console.log('[CalDAV Sync] ✅ Config-Speicher-Anfrage vom iframe erhalten!');
-      console.log('[CalDAV Sync] Neue Config:', event.data.config);
+      console.log('[CalDAV Sync] ✅ Config save request from iframe received!');
+      console.log('[CalDAV Sync] New config:', event.data.config);
 
       try {
-        // Update lokale Config
+        // Update local config
         caldavConfig = event.data.config;
 
-        // Speichere Config UND Mapping zusammen
+        // Save config AND mapping together
         await saveData();
 
-        console.log('[CalDAV Sync] Config erfolgreich gespeichert');
+        console.log('[CalDAV Sync] Config successfully saved');
 
-        // Sende Bestätigung zurück
+        // Send confirmation back
         event.source.postMessage({
           type: 'CONFIG_SAVED',
           success: true
         }, '*');
 
-        // Zeige Snackbar
+        // Show snackbar
         PluginAPI.showSnack({
-          msg: 'CalDAV Einstellungen gespeichert',
+          msg: 'CalDAV settings saved',
           type: 'SUCCESS'
         });
       } catch (error) {
-        console.error('[CalDAV Sync] Fehler beim Speichern der Config:', error);
+        console.error('[CalDAV Sync] Error saving config:', error);
 
-        // Sende Fehler zurück
+        // Send error back
         event.source.postMessage({
           type: 'CONFIG_SAVED',
           success: false,
@@ -636,25 +648,25 @@ async function init() {
     }
   });
 
-  // Zeige Status-Nachricht
+  // Show status message
   if (caldavConfig.enabled) {
     PluginAPI.showSnack({
-      msg: 'CalDAV Sync aktiviert',
+      msg: 'CalDAV Sync enabled',
       type: 'SUCCESS'
     });
   }
 }
 
-// Starte Plugin
+// Start plugin
 init();
 
 // ============================================================================
-// Debug Helper Functions (verfügbar in Browser Console)
+// Debug Helper Functions (available in Browser Console)
 // ============================================================================
 
 /**
- * Debug-Funktion: Zeigt aktuelles Task-Event-Mapping
- * Aufruf in Console: window.CalDAVSync.showMapping()
+ * Debug function: Shows current Task-Event-Mapping
+ * Call in console: window.CalDAVSync.showMapping()
  */
 window.CalDAVSync = {
   showData: async () => {
@@ -668,16 +680,16 @@ window.CalDAVSync = {
 
     console.log('\n=== CalDAV Mapping (Current) ===');
     console.table(taskEventMapping);
-    console.log('Anzahl Einträge:', Object.keys(taskEventMapping).length);
+    console.log('Number of entries:', Object.keys(taskEventMapping).length);
 
-    // Zeige gespeicherte Version
+    // Show saved version
     const dataString = await PluginAPI.loadSyncedData();
-    console.log('\n=== Gespeicherte Daten (Raw) ===');
+    console.log('\n=== Saved Data (Raw) ===');
     console.log(dataString);
 
     if (dataString) {
       const data = JSON.parse(dataString);
-      console.log('\n=== Gespeicherte Daten (Parsed) ===');
+      console.log('\n=== Saved Data (Parsed) ===');
       console.log('Config:', data.config);
       console.log('Mapping:', data.mapping);
     }
@@ -703,36 +715,36 @@ window.CalDAVSync = {
     const tasks = await PluginAPI.getTasks();
     const task = tasks.find(t => t.id === taskId);
     if (!task) {
-      console.error('Task nicht gefunden:', taskId);
+      console.error('Task not found:', taskId);
       return;
     }
-    console.log('Synchronisiere Task:', task);
+    console.log('Synchronizing task:', task);
     await syncTaskToCalDAV(task);
   },
 
   deleteEvent: async (taskId) => {
     const eventUid = taskEventMapping[taskId];
     if (!eventUid) {
-      console.error('Keine Event UID für Task:', taskId);
+      console.error('No event UID for task:', taskId);
       return;
     }
-    console.log('Lösche Event:', eventUid);
+    console.log('Deleting event:', eventUid);
     await deleteCalDAVEvent(eventUid);
     delete taskEventMapping[taskId];
     await saveData();
-    console.log('Event gelöscht und Mapping aktualisiert');
+    console.log('Event deleted and mapping updated');
   },
 
   resetMapping: async () => {
-    if (confirm('Wirklich das komplette Task-Event-Mapping zurücksetzen?')) {
+    if (confirm('Really reset the complete Task-Event-Mapping?')) {
       taskEventMapping = {};
       await saveData();
-      console.log('Mapping zurückgesetzt');
+      console.log('Mapping reset');
     }
   },
 
   resetAll: async () => {
-    if (confirm('Wirklich ALLE Daten (Config + Mapping) zurücksetzen?')) {
+    if (confirm('Really reset ALL data (Config + Mapping)?')) {
       caldavConfig = {
         username: '',
         password: '',
@@ -741,19 +753,19 @@ window.CalDAVSync = {
       };
       taskEventMapping = {};
       await saveData();
-      console.log('Alle Daten zurückgesetzt');
+      console.log('All data reset');
     }
   },
 
   cleanupOrphanedMappings: async () => {
-    console.log('[CalDAV Sync] Prüfe auf verwaiste Mappings...');
+    console.log('[CalDAV Sync] Checking for orphaned mappings...');
     const tasks = await PluginAPI.getTasks();
     const taskIds = new Set(tasks.map(t => t.id));
 
     let removedCount = 0;
     for (const taskId in taskEventMapping) {
       if (!taskIds.has(taskId)) {
-        console.log('[CalDAV Sync] Entferne verwaistes Mapping für gelöschten Task:', taskId);
+        console.log('[CalDAV Sync] Removing orphaned mapping for deleted task:', taskId);
         delete taskEventMapping[taskId];
         removedCount++;
       }
@@ -761,9 +773,9 @@ window.CalDAVSync = {
 
     if (removedCount > 0) {
       await saveData();
-      console.log(`[CalDAV Sync] ✅ ${removedCount} verwaiste(s) Mapping(s) entfernt`);
+      console.log(`[CalDAV Sync] ✅ ${removedCount} orphaned mapping(s) removed`);
     } else {
-      console.log('[CalDAV Sync] Keine verwaisten Mappings gefunden');
+      console.log('[CalDAV Sync] No orphaned mappings found');
     }
 
     return removedCount;
@@ -771,13 +783,13 @@ window.CalDAVSync = {
 
   forceRemoveMapping: async (taskId) => {
     if (taskEventMapping[taskId]) {
-      console.log('[CalDAV Sync] Entferne Mapping für Task:', taskId);
+      console.log('[CalDAV Sync] Removing mapping for task:', taskId);
       delete taskEventMapping[taskId];
       await saveData();
-      console.log('[CalDAV Sync] ✅ Mapping entfernt');
+      console.log('[CalDAV Sync] ✅ Mapping removed');
       return true;
     } else {
-      console.log('[CalDAV Sync] Kein Mapping für Task gefunden:', taskId);
+      console.log('[CalDAV Sync] No mapping found for task:', taskId);
       return false;
     }
   },
@@ -786,7 +798,7 @@ window.CalDAVSync = {
     const tasks = await PluginAPI.getTasks();
     const task = tasks.find(t => t.id === taskId);
     if (!task) {
-      console.error('[CalDAV Sync] Task nicht gefunden:', taskId);
+      console.error('[CalDAV Sync] Task not found:', taskId);
       return null;
     }
 
@@ -806,13 +818,13 @@ window.CalDAVSync = {
   }
 };
 
-console.log('[CalDAV Sync] Debug-Funktionen verfügbar unter window.CalDAVSync');
-console.log('Beispiele:');
-console.log('  window.CalDAVSync.showData()                     - Zeigt alle Daten (Config + Mapping)');
-console.log('  window.CalDAVSync.showConfig()                   - Zeigt Config');
-console.log('  window.CalDAVSync.getTaskDetails(taskId)         - Zeigt Details zu einem Task');
-console.log('  window.CalDAVSync.cleanupOrphanedMappings()      - Entfernt verwaiste Mappings');
-console.log('  window.CalDAVSync.forceRemoveMapping(taskId)     - Entfernt Mapping für spezifischen Task');
-console.log('  window.CalDAVSync.resetMapping()                 - Mapping zurücksetzen');
-console.log('  window.CalDAVSync.resetAll()                     - Alle Daten zurücksetzen');
+console.log('[CalDAV Sync] Debug functions available at window.CalDAVSync');
+console.log('Examples:');
+console.log('  window.CalDAVSync.showData()                     - Show all data (Config + Mapping)');
+console.log('  window.CalDAVSync.showConfig()                   - Show config');
+console.log('  window.CalDAVSync.getTaskDetails(taskId)         - Show details for a task');
+console.log('  window.CalDAVSync.cleanupOrphanedMappings()      - Remove orphaned mappings');
+console.log('  window.CalDAVSync.forceRemoveMapping(taskId)     - Remove mapping for specific task');
+console.log('  window.CalDAVSync.resetMapping()                 - Reset mapping');
+console.log('  window.CalDAVSync.resetAll()                     - Reset all data');
 

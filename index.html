@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CalDAV Sync Einstellungen</title>
+  <title>CalDAV Sync Settings</title>
   <style>
     * {
       box-sizing: border-box;
@@ -170,22 +170,22 @@
   </style>
 </head>
 <body>
-  <h1>CalDAV Sync Einstellungen</h1>
+  <h1>CalDAV Sync Settings</h1>
 
   <form id="settingsForm">
     <div class="form-group">
-      <label for="calendarUrl">CalDAV Kalender URL *</label>
+      <label for="calendarUrl">CalDAV Calendar URL *</label>
       <input
         type="url"
         id="calendarUrl"
         placeholder="https://nextcloud.example.com/remote.php/dav/calendars/user/calendar/"
         required
       >
-      <div class="hint">Muss mit / enden! Beispiel: https://cloud.com/remote.php/dav/calendars/username/calendar/</div>
+      <div class="hint">Must end with /! Example: https://cloud.com/remote.php/dav/calendars/username/calendar/</div>
     </div>
 
     <div class="form-group">
-      <label for="username">Benutzername *</label>
+      <label for="username">Username *</label>
       <input
         type="text"
         id="username"
@@ -195,46 +195,46 @@
     </div>
 
     <div class="form-group">
-      <label for="password">Passwort / App-Password *</label>
+      <label for="password">Password / App Password *</label>
       <input
         type="password"
         id="password"
-        placeholder="App-spezifisches Passwort"
+        placeholder="App-specific password"
         required
       >
-      <div class="hint">Für Nextcloud: Erstelle ein App-Passwort in den Sicherheitseinstellungen</div>
+      <div class="hint">For Nextcloud: Create an app password in the security settings</div>
     </div>
 
     <div class="form-group">
       <div class="checkbox-group">
         <input type="checkbox" id="enabled">
-        <label for="enabled">CalDAV Sync aktivieren</label>
+        <label for="enabled">Enable CalDAV Sync</label>
       </div>
     </div>
 
     <div class="button-group">
-      <button type="submit" class="btn-primary">Speichern</button>
-      <button type="button" class="btn-secondary" id="testBtn">Verbindung testen</button>
-      <button type="button" class="btn-tertiary" id="cancelBtn">Abbrechen</button>
+      <button type="submit" class="btn-primary">Save</button>
+      <button type="button" class="btn-secondary" id="testBtn">Test Connection</button>
+      <button type="button" class="btn-tertiary" id="cancelBtn">Cancel</button>
     </div>
 
     <div id="status" class="status"></div>
   </form>
 
   <script>
-    // Settings beim Laden der Seite laden
+    // Load settings when page loads
     async function loadSettings() {
       try {
-        console.log('[CalDAV Settings] Lade Config...');
+        console.log('[CalDAV Settings] Loading config...');
 
-        // WORKAROUND: loadSyncedData im iframe gibt KEY statt VALUE zurück (Super Productivity Bug)
-        // Nutze stattdessen postMessage an plugin.js
+        // WORKAROUND: loadSyncedData in iframe returns KEY instead of VALUE (Super Productivity bug)
+        // Use postMessage to plugin.js instead
         window.parent.postMessage({
           type: 'REQUEST_CONFIG',
           pluginId: 'caldav-sync'
         }, '*');
 
-        // Warte auf Antwort vom plugin.js
+        // Wait for response from plugin.js
         const config = await new Promise((resolve) => {
           const handler = (event) => {
             if (event.data && event.data.type === 'CONFIG_RESPONSE') {
@@ -244,35 +244,35 @@
           };
           window.addEventListener('message', handler);
 
-          // Timeout nach 2 Sekunden
+          // Timeout after 2 seconds
           setTimeout(() => {
             window.removeEventListener('message', handler);
             resolve(null);
           }, 2000);
         });
 
-        console.log('[CalDAV Settings] Geladene Config:', config);
-        console.log('[CalDAV Settings] Config Typ:', typeof config);
+        console.log('[CalDAV Settings] Loaded config:', config);
+        console.log('[CalDAV Settings] Config type:', typeof config);
 
         if (config && typeof config === 'object' && !Array.isArray(config)) {
-          console.log('[CalDAV Settings] Config ist valide, setze Formular-Felder...');
+          console.log('[CalDAV Settings] Config is valid, setting form fields...');
           document.getElementById('calendarUrl').value = config.calendarUrl || '';
           document.getElementById('username').value = config.username || '';
           document.getElementById('password').value = config.password || '';
           document.getElementById('enabled').checked = config.enabled || false;
-          console.log('[CalDAV Settings] Formular-Felder gesetzt');
-          showStatus('Einstellungen geladen', 'success');
+          console.log('[CalDAV Settings] Form fields set');
+          showStatus('Settings loaded', 'success');
         } else {
-          console.log('[CalDAV Settings] Config ist nicht valide oder leer');
-          showStatus('Keine gespeicherten Einstellungen gefunden', 'info');
+          console.log('[CalDAV Settings] Config is not valid or empty');
+          showStatus('No saved settings found', 'info');
         }
       } catch (error) {
-        console.error('[CalDAV Settings] Fehler beim Laden:', error);
-        showStatus('Fehler beim Laden der Einstellungen', 'error');
+        console.error('[CalDAV Settings] Error loading:', error);
+        showStatus('Error loading settings', 'error');
       }
     }
 
-    // Settings speichern
+    // Save settings
     async function saveSettings(event) {
       event.preventDefault();
 
@@ -281,19 +281,19 @@
       const password = document.getElementById('password').value;
       const enabled = document.getElementById('enabled').checked;
 
-      // Validierung
+      // Validation
       if (!calendarUrl || !username || !password) {
-        showStatus('Bitte alle Pflichtfelder ausfüllen', 'error');
+        showStatus('Please fill out all required fields', 'error');
         return;
       }
 
       if (!calendarUrl.startsWith('http://') && !calendarUrl.startsWith('https://')) {
-        showStatus('URL muss mit http:// oder https:// beginnen', 'error');
+        showStatus('URL must start with http:// or https://', 'error');
         return;
       }
 
       if (!calendarUrl.endsWith('/')) {
-        showStatus('Warnung: URL sollte mit / enden!', 'error');
+        showStatus('Warning: URL should end with /!', 'error');
         return;
       }
 
@@ -305,16 +305,16 @@
       };
 
       try {
-        console.log('[CalDAV Settings] Speichere Config:', { ...config, password: '***' });
+        console.log('[CalDAV Settings] Saving config:', { ...config, password: '***' });
 
-        // WORKAROUND: Sende Config an plugin.js zum Speichern
+        // WORKAROUND: Send config to plugin.js for saving
         window.parent.postMessage({
           type: 'SAVE_CONFIG',
           pluginId: 'caldav-sync',
           config: config
         }, '*');
 
-        // Warte auf Bestätigung
+        // Wait for confirmation
         const success = await new Promise((resolve) => {
           const handler = (event) => {
             if (event.data && event.data.type === 'CONFIG_SAVED') {
@@ -331,48 +331,48 @@
         });
 
         if (success) {
-          console.log('[CalDAV Settings] Config erfolgreich gespeichert');
+          console.log('[CalDAV Settings] Config successfully saved');
 
           await PluginAPI.showSnack({
-            msg: 'Einstellungen erfolgreich gespeichert',
+            msg: 'Settings successfully saved',
             type: 'SUCCESS'
           });
 
-          showStatus('Einstellungen wurden gespeichert!', 'success');
+          showStatus('Settings have been saved!', 'success');
 
-          // Formular neu laden um gespeicherte Werte anzuzeigen
+          // Reload form to display saved values
           setTimeout(() => {
             loadSettings();
           }, 500);
         } else {
-          throw new Error('Timeout beim Speichern');
+          throw new Error('Timeout while saving');
         }
       } catch (error) {
-        console.error('[CalDAV Settings] Fehler beim Speichern:', error);
-        showStatus('Fehler beim Speichern: ' + error.message, 'error');
+        console.error('[CalDAV Settings] Error saving:', error);
+        showStatus('Error saving: ' + error.message, 'error');
 
         await PluginAPI.showSnack({
-          msg: 'Fehler beim Speichern der Einstellungen',
+          msg: 'Error saving settings',
           type: 'ERROR'
         });
       }
     }
 
-    // Verbindung testen
+    // Test connection
     async function testConnection() {
       const calendarUrl = document.getElementById('calendarUrl').value.trim();
       const username = document.getElementById('username').value.trim();
       const password = document.getElementById('password').value;
 
       if (!calendarUrl || !username || !password) {
-        showStatus('Bitte erst alle Felder ausfüllen', 'error');
+        showStatus('Please fill out all fields first', 'error');
         return;
       }
 
-      showStatus('Teste Verbindung...', 'info');
+      showStatus('Testing connection...', 'info');
 
       try {
-        // PROPFIND Request zum Testen
+        // PROPFIND request for testing
         const response = await fetch(calendarUrl, {
           method: 'PROPFIND',
           headers: {
@@ -385,26 +385,26 @@
         console.log('[CalDAV Settings] Test Response:', response.status, response.statusText);
 
         if (response.ok || response.status === 207) {
-          showStatus('✓ Verbindung erfolgreich! Server antwortet.', 'success');
+          showStatus('✓ Connection successful! Server responds.', 'success');
 
           await PluginAPI.showSnack({
-            msg: 'CalDAV Verbindung erfolgreich',
+            msg: 'CalDAV connection successful',
             type: 'SUCCESS'
           });
         } else if (response.status === 401 || response.status === 403) {
-          showStatus('✗ Authentifizierung fehlgeschlagen. Prüfe Benutzername/Passwort.', 'error');
+          showStatus('✗ Authentication failed. Check username/password.', 'error');
         } else if (response.status === 404) {
-          showStatus('✗ Kalender nicht gefunden. Prüfe die URL.', 'error');
+          showStatus('✗ Calendar not found. Check the URL.', 'error');
         } else {
-          showStatus(`✗ Fehler ${response.status}: ${response.statusText}`, 'error');
+          showStatus(`✗ Error ${response.status}: ${response.statusText}`, 'error');
         }
       } catch (error) {
-        console.error('[CalDAV Settings] Test Fehler:', error);
-        showStatus('✗ Verbindungsfehler: ' + error.message, 'error');
+        console.error('[CalDAV Settings] Test error:', error);
+        showStatus('✗ Connection error: ' + error.message, 'error');
       }
     }
 
-    // Status-Nachricht anzeigen
+    // Show status message
     function showStatus(message, type) {
       const statusEl = document.getElementById('status');
       statusEl.textContent = message;
@@ -419,21 +419,21 @@
       showStatus('', '');
     });
 
-    // Initial load - warte auf PluginAPI
+    // Initial load - wait for PluginAPI
     if (typeof PluginAPI !== 'undefined') {
-      console.log('[CalDAV Settings] PluginAPI verfügbar, lade Settings...');
+      console.log('[CalDAV Settings] PluginAPI available, loading settings...');
       loadSettings();
     } else {
-      console.error('[CalDAV Settings] PluginAPI nicht verfügbar!');
-      showStatus('Fehler: Plugin API nicht geladen', 'error');
+      console.error('[CalDAV Settings] PluginAPI not available!');
+      showStatus('Error: Plugin API not loaded', 'error');
 
-      // Versuche es nach kurzer Verzögerung nochmal
+      // Try again after a short delay
       setTimeout(() => {
         if (typeof PluginAPI !== 'undefined') {
-          console.log('[CalDAV Settings] PluginAPI jetzt verfügbar, lade Settings...');
+          console.log('[CalDAV Settings] PluginAPI now available, loading settings...');
           loadSettings();
         } else {
-          console.error('[CalDAV Settings] PluginAPI immer noch nicht verfügbar');
+          console.error('[CalDAV Settings] PluginAPI still not available');
         }
       }, 500);
     }
