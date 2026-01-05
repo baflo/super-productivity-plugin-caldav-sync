@@ -222,19 +222,13 @@
   </form>
 
   <script>
-    // Load settings when page loads
     async function loadSettings() {
       try {
-        console.log('[CalDAV Settings] Loading config...');
-
-        // WORKAROUND: loadSyncedData in iframe returns KEY instead of VALUE (Super Productivity bug)
-        // Use postMessage to plugin.js instead
         window.parent.postMessage({
           type: 'REQUEST_CONFIG',
           pluginId: 'caldav-sync'
         }, '*');
 
-        // Wait for response from plugin.js
         const config = await new Promise((resolve) => {
           const handler = (event) => {
             if (event.data && event.data.type === 'CONFIG_RESPONSE') {
@@ -244,26 +238,19 @@
           };
           window.addEventListener('message', handler);
 
-          // Timeout after 2 seconds
           setTimeout(() => {
             window.removeEventListener('message', handler);
             resolve(null);
           }, 2000);
         });
 
-        console.log('[CalDAV Settings] Loaded config:', config);
-        console.log('[CalDAV Settings] Config type:', typeof config);
-
         if (config && typeof config === 'object' && !Array.isArray(config)) {
-          console.log('[CalDAV Settings] Config is valid, setting form fields...');
           document.getElementById('calendarUrl').value = config.calendarUrl || '';
           document.getElementById('username').value = config.username || '';
           document.getElementById('password').value = config.password || '';
           document.getElementById('enabled').checked = config.enabled || false;
-          console.log('[CalDAV Settings] Form fields set');
           showStatus('Settings loaded', 'success');
         } else {
-          console.log('[CalDAV Settings] Config is not valid or empty');
           showStatus('No saved settings found', 'info');
         }
       } catch (error) {
@@ -272,7 +259,6 @@
       }
     }
 
-    // Save settings
     async function saveSettings(event) {
       event.preventDefault();
 
@@ -281,7 +267,6 @@
       const password = document.getElementById('password').value;
       const enabled = document.getElementById('enabled').checked;
 
-      // Validation
       if (!calendarUrl || !username || !password) {
         showStatus('Please fill out all required fields', 'error');
         return;
@@ -297,24 +282,15 @@
         return;
       }
 
-      const config = {
-        calendarUrl,
-        username,
-        password,
-        enabled
-      };
+      const config = { calendarUrl, username, password, enabled };
 
       try {
-        console.log('[CalDAV Settings] Saving config:', { ...config, password: '***' });
-
-        // WORKAROUND: Send config to plugin.js for saving
         window.parent.postMessage({
           type: 'SAVE_CONFIG',
           pluginId: 'caldav-sync',
           config: config
         }, '*');
 
-        // Wait for confirmation
         const success = await new Promise((resolve) => {
           const handler = (event) => {
             if (event.data && event.data.type === 'CONFIG_SAVED') {
@@ -331,8 +307,6 @@
         });
 
         if (success) {
-          console.log('[CalDAV Settings] Config successfully saved');
-
           await PluginAPI.showSnack({
             msg: 'Settings successfully saved',
             type: 'SUCCESS'
@@ -340,10 +314,7 @@
 
           showStatus('Settings have been saved!', 'success');
 
-          // Reload form to display saved values
-          setTimeout(() => {
-            loadSettings();
-          }, 500);
+          setTimeout(() => loadSettings(), 500);
         } else {
           throw new Error('Timeout while saving');
         }
@@ -358,7 +329,6 @@
       }
     }
 
-    // Test connection
     async function testConnection() {
       const calendarUrl = document.getElementById('calendarUrl').value.trim();
       const username = document.getElementById('username').value.trim();
@@ -372,7 +342,6 @@
       showStatus('Testing connection...', 'info');
 
       try {
-        // PROPFIND request for testing
         const response = await fetch(calendarUrl, {
           method: 'PROPFIND',
           headers: {
@@ -382,11 +351,8 @@
           }
         });
 
-        console.log('[CalDAV Settings] Test Response:', response.status, response.statusText);
-
         if (response.ok || response.status === 207) {
           showStatus('✓ Connection successful! Server responds.', 'success');
-
           await PluginAPI.showSnack({
             msg: 'CalDAV connection successful',
             type: 'SUCCESS'
@@ -411,29 +377,22 @@
       statusEl.className = 'status show ' + type;
     }
 
-    // Event Listeners
     document.getElementById('settingsForm').addEventListener('submit', saveSettings);
     document.getElementById('testBtn').addEventListener('click', testConnection);
     document.getElementById('cancelBtn').addEventListener('click', () => {
-      loadSettings(); // Reset form
+      loadSettings();
       showStatus('', '');
     });
 
-    // Initial load - wait for PluginAPI
     if (typeof PluginAPI !== 'undefined') {
-      console.log('[CalDAV Settings] PluginAPI available, loading settings...');
       loadSettings();
     } else {
-      console.error('[CalDAV Settings] PluginAPI not available!');
       showStatus('Error: Plugin API not loaded', 'error');
-
-      // Try again after a short delay
       setTimeout(() => {
         if (typeof PluginAPI !== 'undefined') {
-          console.log('[CalDAV Settings] PluginAPI now available, loading settings...');
           loadSettings();
         } else {
-          console.error('[CalDAV Settings] PluginAPI still not available');
+          console.error('[CalDAV Settings] PluginAPI not available');
         }
       }, 500);
     }

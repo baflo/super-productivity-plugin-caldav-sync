@@ -1,10 +1,10 @@
 {
   "id": "caldav-sync",
   "name": "CalDAV Schedule Sync",
-  "version": "1.4.0",
+  "version": "1.0.0",
   "description": "Synchronizes scheduled tasks (plannedAt/dueWithTime/dueDay) to a CalDAV calendar",
   "manifestVersion": 1,
-  "minSupVersion": "14.0.0",
+  "minSupVersion": "16.8.3",
   "author": "Florian",
   "iFrame": true,
   "sidePanel": true,
