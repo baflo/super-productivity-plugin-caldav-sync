@@ -26,12 +26,13 @@ A plugin for Super Productivity that automatically synchronizes scheduled tasks 
 After activating the plugin:
 
 1. Open the **CalDAV Settings** via:
-   - Side panel button: "CalDAV Settings Side Panel"
+   - Side panel button: "CalDAV Settings"
 2. Enter your CalDAV credentials:
    - **Calendar URL**: Your CalDAV calendar URL (must end with `/`)
    - **Username**: Your CalDAV username
    - **Password**: App-specific password (recommended)
    - **Enable CalDAV Sync**: Check the box to activate
+   - **Delete completed tasks from calendar**: When enabled, completed tasks are automatically removed from the calendar (default: disabled)
 3. Click **Test Connection** to verify your settings
 4. Click **Save**
 
@@ -57,7 +58,7 @@ Once the plugin is activated and configured:
 - Every task with **Scheduled Date** (`plannedAt`), **Due Date with Time** (`dueWithTime`), or **Due Date only** (`dueDay`) is automatically synchronized
 - Changes to the task (title, time, description) update the calendar event
 - Deleting the task or removing the time also deletes the event
-- When a task is marked as completed, the event is removed
+- When a task is marked as completed, the event is removed from the calendar (if "Delete completed tasks from calendar" is enabled)
 
 ### Manual Synchronization
 

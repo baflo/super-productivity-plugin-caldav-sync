@@ -28,7 +28,8 @@ let caldavConfig = {
   username: '',
   password: '',
   calendarUrl: '',
-  enabled: false
+  enabled: false,
+  deleteCompletedTasks: true  // Delete completed tasks from calendar
 };
 
 // Mapping: { taskId: eventUid } - Tracks which Super Productivity task corresponds to which CalDAV event
@@ -83,6 +84,24 @@ function shouldSyncTask(task) {
   }
 
   return true;
+}
+
+/**
+ * Checks if a task's event should be deleted from the calendar
+ * Returns true if the task's calendar event should be removed
+ */
+function shouldDeleteTask(task) {
+  // Delete if task has no schedule anymore
+  if (!task.plannedAt && !task.dueWithTime && !task.dueDay) {
+    return true;
+  }
+
+  // Delete if task is completed and deleteCompletedTasks is enabled
+  if (task.isDone && caldavConfig.deleteCompletedTasks) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -279,7 +298,7 @@ async function onTaskUpdate(taskIdOrObject) {
 
   if (shouldSyncTask(task)) {
     await syncTaskToCalDAV(task);
-  } else {
+  } else if (shouldDeleteTask(task)) {
     const eventUid = taskEventMapping[taskId] || `sp-task-${taskId}`;
 
     try {
@@ -331,14 +350,15 @@ async function onTaskDelete(taskIdOrObject) {
 
 /**
  * Called when a task is completed
- * Removes the event from the calendar
+ * Removes the event from the calendar (if deleteCompletedTasks is enabled)
  */
 async function onTaskComplete(taskIdOrObject) {
-  // IMPORTANT: Super Productivity sometimes passes {taskId: 'xxx'} instead of just the ID!
   const taskId = typeof taskIdOrObject === 'object' ? taskIdOrObject.taskId : taskIdOrObject;
 
-  // Delete event when task is completed
-  await onTaskDelete(taskId);
+  // Only delete if setting is enabled
+  if (caldavConfig.deleteCompletedTasks) {
+    await onTaskDelete(taskId);
+  }
 }
 
 // ============================================================================
@@ -403,7 +423,10 @@ async function init() {
 
   PluginAPI.registerSidePanelButton({
     label: 'CalDAV Settings',
-    icon: 'settings'
+    icon: 'settings',
+    onClick: () => {
+      PluginAPI.showIndexHtmlAsView();
+    }
   });
 
   PluginAPI.registerHeaderButton({
@@ -599,7 +622,8 @@ window.CalDAVSync = {
         username: '',
         password: '',
         calendarUrl: '',
-        enabled: false
+        enabled: false,
+        deleteCompletedTasks: false,
       };
       taskEventMapping = {};
       await saveData();
