@@ -31,7 +31,7 @@ After activating the plugin:
    - **Calendar URL**: Your CalDAV calendar URL (must end with `/`)
    - **Username**: Your CalDAV username
    - **Password**: App-specific password (recommended)
-   - **Enable CalDAV Sync**: Check the box to activate
+   - **Enable auto sync**: Check the box to activate
    - **Delete completed tasks from calendar**: When enabled, completed tasks are automatically removed from the calendar (default: disabled)
 3. Click **Test Connection** to verify your settings
 4. Click **Save**
