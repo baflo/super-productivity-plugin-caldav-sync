@@ -25,6 +25,8 @@ const DEFAULT_CONFIG = {
   password: '',
   enabled: false,
   deleteCompletedTasks: true,
+  addReminders: true,
+  reminderMinutesBefore: 0,
 };
 
 async function getConfig() {
@@ -50,7 +52,8 @@ function eventUidForTask(task) {
   return `sp-task-${task.id}`;
 }
 
-function createEventFromTask(task) {
+function createEventFromTask(task, config) {
+  config = config || {};
   const hasTime = task.plannedAt || task.dueWithTime;
 
   let dtstart, dtend;
@@ -67,6 +70,23 @@ function createEventFromTask(task) {
     dtend = `DTEND;VALUE=DATE:${dateOnly}`;
   }
 
+  // Reminder (VALARM): Super Productivity notifies you at a task's scheduled
+  // time, so mirror that as an alarm on timed events. Optional lead time via
+  // config.reminderMinutesBefore (0 = at the scheduled time, like SP).
+  // All-day (dueDay-only) tasks get no alarm, matching SP (no notification).
+  let alarmLines = [];
+  if (config.addReminders !== false && hasTime) {
+    const mins = Math.max(0, parseInt(config.reminderMinutesBefore, 10) || 0);
+    const trigger = mins > 0 ? `-PT${mins}M` : 'PT0S';
+    alarmLines = [
+      'BEGIN:VALARM',
+      'ACTION:DISPLAY',
+      `DESCRIPTION:${escapeICalText(task.title)}`,
+      `TRIGGER:${trigger}`,
+      'END:VALARM',
+    ];
+  }
+
   return [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
@@ -80,6 +100,7 @@ function createEventFromTask(task) {
     task.notes ? `DESCRIPTION:${escapeICalText(task.notes)}` : '',
     'STATUS:CONFIRMED',
     'TRANSP:OPAQUE',
+    ...alarmLines,
     'END:VEVENT',
     'END:VCALENDAR',
   ]
@@ -150,7 +171,7 @@ async function onTaskUpdate(taskIdOrObject) {
 
   if (shouldSyncTask(task)) {
     try {
-      await putCalDAVEvent(config, eventUidForTask(task), createEventFromTask(task));
+      await putCalDAVEvent(config, eventUidForTask(task), createEventFromTask(task, config));
       PluginAPI.showSnack({ msg: `"${task.title}" synchronized to calendar`, type: 'SUCCESS' });
     } catch (error) {
       console.error('[CalDAV Sync] Error synchronizing:', error);
@@ -236,7 +257,7 @@ async function init() {
 
         for (const task of tasksToSync) {
           try {
-            await putCalDAVEvent(config, eventUidForTask(task), createEventFromTask(task));
+            await putCalDAVEvent(config, eventUidForTask(task), createEventFromTask(task, config));
             synced++;
             if (synced < tasksToSync.length) {
               await new Promise((resolve) => setTimeout(resolve, 300));
@@ -287,7 +308,7 @@ window.CalDAVSync = {
       return;
     }
     console.log('Synchronizing task:', task);
-    await putCalDAVEvent(config, eventUidForTask(task), createEventFromTask(task));
+    await putCalDAVEvent(config, eventUidForTask(task), createEventFromTask(task, config));
   },
 
   deleteEvent: async (taskId) => {
