@@ -1,15 +1,21 @@
 {
   "id": "caldav-sync",
   "name": "CalDAV Schedule Sync",
-  "version": "2.0.0",
-  "description": "Synchronizes scheduled tasks (plannedAt/dueWithTime/dueDay) to a CalDAV calendar",
+  "version": "2.1.0",
+  "description": "Synchronizes scheduled tasks (dueWithTime/dueDay) to a CalDAV calendar",
   "manifestVersion": 1,
   "minSupVersion": "16.8.3",
   "author": "Florian",
   "jsonSchemaCfg": "config.schema.json",
   "hooks": [
-    "ANY_TASK_UPDATE",
-    "TASK_DELETE",
-    "TASK_COMPLETE"
+    "taskCreated",
+    "taskUpdate",
+    "taskDelete",
+    "taskComplete"
+  ],
+  "permissions": [
+    "getTasks",
+    "getArchivedTasks",
+    "showSnack"
   ]
 }
