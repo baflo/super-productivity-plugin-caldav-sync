@@ -369,7 +369,7 @@ async function onTaskUpsert(payload, allowDelete = true) {
       console.error('[CalDAV Sync] Error synchronizing, queued for retry:', error);
       pendingOps.set(task.id, 'put');
       PluginAPI.showSnack({
-        msg: `CalDAV sync failed for "${task.title}" — will retry on next sync`,
+        msg: `CalDAV sync failed for "${task.title}": ${error.message} — will retry on next sync`,
         type: 'ERROR',
       });
     }
@@ -491,6 +491,7 @@ async function manualSync() {
 
     let synced = 0;
     let errors = 0;
+    let firstError = null;
 
     await runPool(tasksToSync, 3, async (task) => {
       try {
@@ -500,6 +501,7 @@ async function manualSync() {
       } catch (error) {
         console.error('[CalDAV Sync] Error synchronizing task:', task.id, error);
         pendingOps.set(task.id, 'put');
+        if (!firstError) firstError = error.message;
         errors++;
       }
     });
@@ -513,7 +515,7 @@ async function manualSync() {
 
     const msgParts = [`${synced} tasks synchronized`];
     if (orphansRemoved > 0) msgParts.push(`${orphansRemoved} orphaned events removed`);
-    if (errors > 0) msgParts.push(`${errors} errors`);
+    if (errors > 0) msgParts.push(`${errors} errors (first: ${firstError})`);
     PluginAPI.showSnack({
       msg: msgParts.join(', '),
       type: errors === 0 ? 'SUCCESS' : 'ERROR',

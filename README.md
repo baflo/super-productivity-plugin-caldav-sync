@@ -2,8 +2,11 @@
 
 A plugin for Super Productivity that automatically synchronizes scheduled tasks to a CalDAV calendar.
 
+> **⚠️ One-way sync only:** This plugin writes **from Super Productivity to your calendar** — never the other way around. Events created or edited in the calendar are **not** imported into Super Productivity, and changes made to synced events in the calendar will be overwritten on the next sync. Use a dedicated calendar for this plugin.
+
 ## ✨ Features
 
+- ➡️ **One-way sync** (Super Productivity → CalDAV): the calendar mirrors your scheduled tasks
 - ✅ **Automatic synchronization** of scheduled tasks to CalDAV:
   - Tasks with **Due Date + Time** (`dueWithTime`) as timed events
   - Tasks with **Due Date only** (`dueDay`) as all-day events
@@ -101,6 +104,11 @@ If you see CORS errors:
 - This is normal if the CalDAV server doesn't allow CORS
 - Use the desktop version of Super Productivity (no CORS issues)
 - Or configure your CalDAV server for CORS
+
+### Sync errors
+
+- The manual sync summary shows the **first error message including the HTTP status** (e.g. `2 errors (first: CalDAV PUT failed: 401 Unauthorized)`) — this usually tells you whether it's a wrong URL (404), wrong credentials (401), or a permission problem (403)
+- Auto-sync error notifications include the same detail; the full list of errors is in the console (`[CalDAV Sync]` prefix)
 
 ### Tasks are not syncing
 
