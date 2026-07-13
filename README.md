@@ -21,7 +21,7 @@ A plugin for Super Productivity that automatically synchronizes scheduled tasks 
 
 ## 🚀 Installation
 
-1. Download the plugin directory
+1. Download the plugin ZIP (or build it yourself, see Development below)
 2. In Super Productivity: `Settings` → `Plugins` → `Add Plugin`
 3. Enable the plugin
 
@@ -138,6 +138,21 @@ For Nextcloud, it's recommended to use an app-specific password:
 5. Use this in the plugin (NOT your main password!)
 
 ## 📝 Development & Debugging
+
+### Project structure
+
+The source lives in TypeScript modules under `src/` and is bundled into the
+single `dist/plugin.js` that Super Productivity loads:
+
+```bash
+npm install
+npm test          # typecheck + unit tests (requires Node >= 22.18)
+npm run build     # bundle src/ -> dist/plugin.js
+npm run package   # test + build + dist/caldav-sync.zip (installable ZIP)
+```
+
+There are no runtime dependencies — `node_modules` is dev-tooling only
+(esbuild, TypeScript). Do not edit `dist/plugin.js` by hand.
 
 ### Console Logs
 

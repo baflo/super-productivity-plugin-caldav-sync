@@ -1,0 +1,23 @@
+{
+  "name": "super-productivity-plugin-caldav-sync",
+  "version": "2.2.2",
+  "description": "Super Productivity plugin that syncs scheduled tasks to a CalDAV calendar",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --format=iife --target=es2020 --outfile=dist/plugin.js --banner:js=\"/* CalDAV Schedule Sync Plugin for Super Productivity — built from src/, do not edit. */\"",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run typecheck && node --test \"tests/*.test.ts\"",
+    "package": "npm run test && npm run build && zip -j dist/caldav-sync.zip dist/plugin.js manifest.json config.schema.json README.md LICENSE"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/baflo/super-productivity-plugin-caldav-sync"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "esbuild": "0.28.1",
+    "typescript": "7.0.2"
+  }
+}
