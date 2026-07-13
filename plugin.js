@@ -232,6 +232,22 @@ async function listCalDAVTaskIds(config) {
 const pendingOps = new Map(); // taskId -> 'put' | 'delete'
 let isFlushingPending = false;
 
+// Hooks can fire nearly simultaneously for the same task (e.g. TASK_CREATED
+// followed by the scheduling TASK_UPDATE when a task is created directly in
+// the schedule view). Serialize CalDAV requests per task so a slow earlier
+// request can never overtake and undo a later one.
+const taskOpChains = new Map(); // taskId -> Promise
+
+function queuePerTask(taskId, fn) {
+  const prev = taskOpChains.get(taskId) || Promise.resolve();
+  const next = prev.then(fn, fn);
+  taskOpChains.set(
+    taskId,
+    next.catch(() => {}),
+  );
+  return next;
+}
+
 async function flushPendingOps(config) {
   if (pendingOps.size === 0 || isFlushingPending) return;
   isFlushingPending = true;
@@ -293,7 +309,11 @@ function extractDeletedTaskIds(payload) {
 // Event Handlers
 // ============================================================================
 
-async function onTaskUpsert(payload) {
+// allowDelete=false for TASK_CREATED: a brand-new task cannot have an event
+// yet, and issuing a DELETE here would race the PUT of the scheduling
+// TASK_UPDATE that follows right after when creating a task in the schedule
+// view
+async function onTaskUpsert(payload, allowDelete = true) {
   const config = await getConfig();
   if (!config.enabled || !isConfigComplete(config)) return;
 
@@ -317,7 +337,9 @@ async function onTaskUpsert(payload) {
 
   if (shouldSyncTask(task)) {
     try {
-      await putCalDAVEvent(config, eventUidForTask(task), createEventFromTask(task));
+      await queuePerTask(task.id, () =>
+        putCalDAVEvent(config, eventUidForTask(task), createEventFromTask(task)),
+      );
       pendingOps.delete(task.id);
       console.log('[CalDAV Sync] Synchronized:', task.title);
       await flushPendingOps(config);
@@ -329,15 +351,19 @@ async function onTaskUpsert(payload) {
         type: 'ERROR',
       });
     }
-  } else if (shouldDeleteTask(task, config)) {
+  } else if (allowDelete && shouldDeleteTask(task, config)) {
     await deleteEventForTaskId(config, task.id);
     await flushPendingOps(config);
   }
 }
 
+async function onTaskCreated(payload) {
+  await onTaskUpsert(payload, false);
+}
+
 async function deleteEventForTaskId(config, taskId) {
   try {
-    await deleteCalDAVEvent(config, `sp-task-${taskId}`);
+    await queuePerTask(taskId, () => deleteCalDAVEvent(config, `sp-task-${taskId}`));
     pendingOps.delete(taskId);
     console.log('[CalDAV Sync] Event removed for task:', taskId);
   } catch (error) {
@@ -486,7 +512,7 @@ async function init() {
   PluginAPI.registerHook(PluginAPI.Hooks.TASK_COMPLETE, onTaskComplete);
   // TASK_CREATED covers tasks created with a schedule, incl. repeat instances
   // (fall back to the raw hook name for SP versions without the enum member)
-  PluginAPI.registerHook(PluginAPI.Hooks.TASK_CREATED || 'taskCreated', onTaskUpsert);
+  PluginAPI.registerHook(PluginAPI.Hooks.TASK_CREATED || 'taskCreated', onTaskCreated);
 
   PluginAPI.registerHeaderButton({
     label: 'CalDAV Sync',
