@@ -2,18 +2,22 @@
 
 A plugin for Super Productivity that automatically synchronizes scheduled tasks to a CalDAV calendar.
 
+> **⚠️ One-way sync only:** This plugin writes **from Super Productivity to your calendar** — never the other way around. Events created or edited in the calendar are **not** imported into Super Productivity, and changes made to synced events in the calendar will be overwritten on the next sync. Use a dedicated calendar for this plugin.
+
 ## ✨ Features
 
+- ➡️ **One-way sync** (Super Productivity → CalDAV): the calendar mirrors your scheduled tasks
 - ✅ **Automatic synchronization** of scheduled tasks to CalDAV:
-  - Tasks with **Scheduled Date** (`plannedAt`)
-  - Tasks with **Due Date + Time** (`dueWithTime`)
+  - Tasks with **Due Date + Time** (`dueWithTime`) as timed events
   - Tasks with **Due Date only** (`dueDay`) as all-day events
+  - Newly created tasks with a schedule, including **repeating task instances**
 - 🔒 **Single Source of Truth**: Super Productivity has full control over the calendar
 - 📥 **All tasks supported**: Syncs all scheduled tasks, including those imported from Jira/GitHub/etc.
-- 📅 **iCalendar Standard**: Compatible with all CalDAV servers (Nextcloud, Radicale, etc.)
+- 📅 **iCalendar Standard**: RFC 5545 compliant (line folding, exclusive all-day DTEND), compatible with all CalDAV servers (Nextcloud, Radicale, etc.)
 - 🔄 **Automatic Updates**: Changes (title, time, description) are propagated to the calendar
-- 🗑️ **Cleanup**: Deleted or completed tasks are also removed from the calendar
-
+- ⏰ **Optional reminder alarms** (VALARM) on timed events, with configurable lead time
+- 🗑️ **Cleanup**: Deleted (also batch-deleted) or completed tasks are removed from the calendar; manual sync additionally removes orphaned events
+- 📶 **Retry queue**: Requests that fail (e.g. offline) are queued and retried on the next sync
 
 ## 🚀 Installation
 
@@ -23,18 +27,16 @@ A plugin for Super Productivity that automatically synchronizes scheduled tasks 
 
 ## ⚙️ Configuration
 
-After activating the plugin:
+The plugin is configured via the standard Super Productivity plugin settings
+(`Settings` → `Plugins` → `CalDAV Schedule Sync`):
 
-1. Open the **CalDAV Settings** via:
-   - Side panel button: "CalDAV Settings"
-2. Enter your CalDAV credentials:
-   - **Calendar URL**: Your CalDAV calendar URL (must end with `/`)
-   - **Username**: Your CalDAV username
-   - **Password**: App-specific password (recommended)
-   - **Enable auto sync**: Check the box to activate
-   - **Delete completed tasks from calendar**: When enabled, completed tasks are automatically removed from the calendar (default: disabled)
-3. Click **Test Connection** to verify your settings
-4. Click **Save**
+- **Calendar URL**: Your CalDAV calendar URL (a missing trailing `/` is added automatically)
+- **Username**: Your CalDAV username
+- **Password**: App-specific password (recommended)
+- **Enable auto sync**: Check the box to activate
+- **Delete completed tasks from calendar**: When enabled, completed tasks are automatically removed from the calendar (default: disabled)
+- **Add reminders (alarms) to calendar events**: Adds a VALARM to timed events so Nextcloud and your phone remind you (default: enabled)
+- **Reminder lead time (minutes before)**: 0 = remind at the task's scheduled time (matches Super Productivity); e.g. 10 = notify 10 minutes before
 
 ### Finding your Calendar URL
 
@@ -48,41 +50,41 @@ Example:
 https://cloud.example.com/remote.php/dav/calendars/florian/super-productivity/
 ```
 
-**Important:** The URL must end with a `/`!
-
 ## 🎯 Usage
 
 ### Automatic Synchronization
 
 Once the plugin is activated and configured:
-- Every task with **Scheduled Date** (`plannedAt`), **Due Date with Time** (`dueWithTime`), or **Due Date only** (`dueDay`) is automatically synchronized
+- Every task with a **Due Date with Time** (`dueWithTime`) or **Due Date only** (`dueDay`) is automatically synchronized — including tasks that are created with a schedule right away (e.g. instances of repeating tasks)
 - Changes to the task (title, time, description) update the calendar event
-- Deleting the task or removing the time also deletes the event
+- Deleting the task or removing the due date also deletes the event
 - When a task is marked as completed, the event is removed from the calendar (if "Delete completed tasks from calendar" is enabled)
+- Successful syncs are silent (see console logs); only errors show a notification
 
 ### Manual Synchronization
 
-Click the **"CalDAV Sync"** button in the header bar to:
-- Manually synchronize all scheduled tasks
-- Clean up orphaned events (tasks that are no longer scheduled)
-- See synchronization status
+Open the main menu (burger menu) and click the **"CalDAV Sync"** entry to:
+- Synchronize all scheduled tasks
+- Remove orphaned events (`sp-task-*.ics` files in the calendar that no longer belong to a scheduled task)
+- Retry previously failed requests
+- See a summary notification
 
 ## 🔍 Which tasks are synchronized?
 
 A task is **only** synchronized if:
-- ✅ It has a **Scheduled Date** (`plannedAt`) **OR** a **Due Date with Time** (`dueWithTime`) **OR** a **Due Date only** (`dueDay`)
+- ✅ It has a **Due Date with Time** (`dueWithTime`) **OR** a **Due Date only** (`dueDay`)
 - ✅ It is **not** marked as completed (`isDone = false`)
 
 **Note:** All tasks are synchronized, including those imported from Jira, GitHub, GitLab, etc.
 
 ### What gets synchronized?
 
-- **Start Time**: `task.plannedAt` or `task.dueWithTime` (whichever is set)
+- **Start Time**: `task.dueWithTime`
 - **End Time**: Start time + `task.timeEstimate` (Default: 1 hour)
-- **All-day Events**: Tasks with only `task.dueDay` (no time) are created as all-day events
+- **All-day Events**: Tasks with only `task.dueDay` (no time)
 - **Title**: `task.title`
 - **Description**: `task.notes`
-- **UID**: `sp-task-{taskId}` (for tracking)
+- **UID / filename**: `sp-task-{taskId}` (for tracking)
 - **Timezone**: UTC with automatic conversion to your local timezone
 
 ## 🐛 Troubleshooting
@@ -94,7 +96,7 @@ A task is **only** synchronized if:
 3. Common issues:
    - Plugin disabled → Enable it in the settings UI
    - Missing credentials → Fill out all fields in settings
-   - Wrong URL → Check that URL ends with `/`
+   - "Enable auto sync" not checked
 
 ### CORS Errors
 
@@ -103,14 +105,19 @@ If you see CORS errors:
 - Use the desktop version of Super Productivity (no CORS issues)
 - Or configure your CalDAV server for CORS
 
+### Sync errors
+
+- The manual sync summary shows the **first error message including the HTTP status** (e.g. `2 errors (first: CalDAV PUT failed: 401 Unauthorized)`) — this usually tells you whether it's a wrong URL (404), wrong credentials (401), or a permission problem (403)
+- Auto-sync error notifications include the same detail; the full list of errors is in the console (`[CalDAV Sync]` prefix)
+
 ### Tasks are not syncing
 
-1. Check if the task has a **Scheduled Date** (`plannedAt`) **or** a **Due Date with Time** (`dueWithTime`) **or** a **Due Date only** (`dueDay`)
-   - **Scheduled Date**: Use `S` or the Schedule view in Super Productivity
-   - **Due Date with Time**: Set a due date and select a time (not just a date!)
+1. Check if the task has a **Due Date with Time** (`dueWithTime`) **or** a **Due Date only** (`dueDay`)
+   - **Due Date with Time**: Set a due date and select a time
    - **Due Date only**: Set a due date without time for all-day events
 2. Check the console for errors
 3. Use `window.CalDAVSync.getTaskDetails('taskId')` to inspect a specific task
+4. Use `window.CalDAVSync.showPendingRetries()` to see queued (failed) operations
 
 ### "Configuration incomplete" error
 
@@ -134,42 +141,29 @@ For Nextcloud, it's recommended to use an app-specific password:
 
 ### Console Logs
 
-All plugin logs have the prefix `[CalDAV Sync]`:
-
-```javascript
-// Open browser console: Ctrl+Shift+I
-// Example logs:
-[CalDAV Sync] Plugin wird initialisiert...
-[CalDAV Sync] Config geladen: {enabled: true, hasUrl: true, ...}
-[CalDAV Sync] Plugin erfolgreich initialisiert
-[CalDAV Sync] Button wurde geklickt
-[CalDAV Sync] Tasks geladen: 34
-[CalDAV Sync] Tasks zum Synchronisieren: 5
-```
+All plugin logs have the prefix `[CalDAV Sync]`.
 
 ### Debug Functions
 
 ```javascript
-// Open console and test:
-window.CalDAVSync.showData()                     // Show all data (config + mapping)
-window.CalDAVSync.showConfig()                   // Show config
+// Open browser console: Ctrl+Shift+I
+window.CalDAVSync.showConfig()                   // Show config (password masked)
 window.CalDAVSync.getTaskDetails(taskId)         // Show details for a specific task
-window.CalDAVSync.cleanupOrphanedMappings()      // Remove orphaned mappings
-window.CalDAVSync.forceRemoveMapping(taskId)     // Remove mapping for specific task
-window.CalDAVSync.resetAll()                     // Reset all data
+window.CalDAVSync.syncTask(taskId)               // Force-sync a specific task
+window.CalDAVSync.deleteEvent(taskId)            // Delete the event for a task
+window.CalDAVSync.listEvents()                   // List task ids of all events in the calendar
+window.CalDAVSync.cleanupOrphans()               // Remove orphaned events
+window.CalDAVSync.showPendingRetries()           // Show queued (failed) operations
+window.CalDAVSync.manualSync()                   // Run a full manual sync
 ```
 
 ## ⚠️ Important Notes
 
-- **Security**: Passwords are stored in the plugin's synced data (encrypted if Super Productivity sync is encrypted)
-- **Single Source of Truth**: Use a dedicated calendar only for Super Productivity
+- **Security**: Passwords are stored in the plugin's config (encrypted if Super Productivity sync is encrypted)
+- **Single Source of Truth**: Use a dedicated calendar only for Super Productivity — the manual sync deletes `sp-task-*.ics` events that no longer belong to a scheduled task
 - **Backup**: Create backups of your calendar before the first test
 - **Desktop Version**: Recommended due to CORS restrictions in browsers
-
-## 🔮 Future Features (Optional)
-
-- [x] Settings UI (iFrame)
-- [x] All-day events support
+- **Retry queue**: The queue is held in memory; after an app restart, run a manual sync to bring the calendar back in line
 
 ## 📄 License
 

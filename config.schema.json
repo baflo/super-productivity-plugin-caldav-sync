@@ -27,7 +27,7 @@
       "type": "boolean",
       "title": "Delete completed tasks from calendar",
       "description": "When enabled, completed tasks are automatically removed from the calendar",
-      "default": true
+      "default": false
     },
     "addReminders": {
       "type": "boolean",
