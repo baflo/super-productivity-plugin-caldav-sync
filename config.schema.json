@@ -28,6 +28,19 @@
       "title": "Delete completed tasks from calendar",
       "description": "When enabled, completed tasks are automatically removed from the calendar",
       "default": true
+    },
+    "addReminders": {
+      "type": "boolean",
+      "title": "Add reminders (alarms) to calendar events",
+      "description": "Adds a notification/alarm to timed events so Nextcloud and your phone remind you",
+      "default": true
+    },
+    "reminderMinutesBefore": {
+      "type": "integer",
+      "title": "Reminder lead time (minutes before)",
+      "description": "0 = remind at the task's scheduled time (matches Super Productivity). e.g. 10 = notify 10 minutes before.",
+      "default": 0,
+      "minimum": 0
     }
   },
   "required": ["calendarUrl", "username", "password"]
