@@ -195,6 +195,8 @@ importToTask(task, sem):
   PluginAPI.updateTask(task.id, taskFieldsFrom(sem))
   // TASK_UPDATE fires from our own updateTask:
   onTaskUpsert: if importing.delete(taskId) → return   // record already updated
+  if task.reminderId && start changed:
+    snack('Reminder for "…" still fires at the old time')   // see resolved Q1
 ```
 
 SP sync then carries the change to other clients; for them the calendar already
@@ -253,18 +255,83 @@ does not depend on it.
 - `DURATION` as DTEND alternative.
 - Preserve all unrecognized lines verbatim for read-modify-write.
 
-## Open questions to verify during implementation
+## Formerly open questions — resolved
 
-1. Does `PluginAPI.updateTask` accept `dueWithTime`/`dueDay` updates and keep
-   SP's reminder bookkeeping consistent? (If not: `dispatchAction` with the
-   proper scheduling actions.)
-2. Is plugin config (`jsonSchemaCfg`) part of SP's synced data on all platforms?
-   If not, move sync-relevant options (`addReminders`, `reminderMinutesBefore`)
-   into `persistDataSynced`.
-3. `sync-collection` REPORT support across target servers (Nextcloud, Radicale,
-   Baïkal) — CTag + ETag diff is the universal fallback and stays in.
-4. Behavior of servers that rewrite stored ICS on PUT (ETag returned but bytes
-   differ on next GET) — covered by GET-after-PUT when the PUT response carries
-   no ETag; verify Nextcloud specifics.
-5. Android/iOS app lifecycle: polling pauses while the app is suspended; define
-   catch-up on resume (single poll tick on `focus`).
+### 1. `updateTask` with `dueWithTime`/`dueDay` — works, with one reminder caveat
+
+Verified in SP source (master, ~v18.13):
+
+- `PluginBridgeService.updateTask` passes `Partial<Task>` through to
+  `TaskService.update` **without a field whitelist** — `dueWithTime`, `dueDay`,
+  `title`, `notes`, `timeEstimate` all land in the entity, views react, and the
+  `TASK_UPDATE` hook fires (our echo suppression handles that).
+- **But**: reminder bookkeeping does *not* follow. `task-reminder.effects.ts`
+  manages reminders exclusively via `scheduleTaskWithTime` /
+  `reScheduleTaskWithTime` / `unscheduleTask` / `planTaskForDay`; on a plain
+  `updateTask` it only reacts to `isDone`. And those scheduling actions are
+  **not plugin-dispatchable**: `allowed-plugin-actions.const.ts` explicitly
+  excludes them (allowlist contains only layout/focus/current-task/context
+  actions).
+
+**Design consequence:** import via `updateTask` as planned. If the task has a
+`reminderId` and the imported start time differs, the existing SP reminder keeps
+firing at the *old* time — surface a snack and document it. Long term: propose
+upstream (SP) either allowlisting the scheduling actions for plugins or adding a
+`scheduleTask()` bridge method. Membership in the Today tag after a `dueDay`
+import is reconciled by SP's own day-change/sync effects (`task-due.effects.ts`)
+rather than immediately — acceptable lag, verify UX during implementation.
+
+### 2. Plugin config is synced — requirement satisfied
+
+`PluginConfigService.getPluginConfig` persists via
+`PluginUserPersistenceService`, which dispatches into the `pluginUserData`
+NgRx slice — gzip-compressed and included in **IndexedDB, the op-log, and the
+sync server** (per the service's own docs). So `addReminders` /
+`reminderMinutesBefore` (and the CalDAV credentials) converge across clients via
+SP sync automatically; no `persistDataSynced` workaround needed.
+
+**Design consequence:** the flip side confirms principle 4 — the device-local
+three-way state must live in `localStorage`, *not* in plugin persistence,
+precisely because everything in `pluginUserData` is synced.
+
+### 3. `sync-collection` REPORT — supported by all target servers
+
+- **Radicale**: verified empirically against a live instance —
+  `cs:getctag` + `d:sync-token` via PROPFIND, initial and incremental
+  `sync-collection` REPORTs work; the delta contains only changed resources
+  plus a fresh token, and **deletions appear as `<response>` entries with
+  status 404**, exactly as RFC 6578 specifies.
+- **Nextcloud / Baïkal**: both are sabre/dav-based; sabre/dav ships
+  WebDAV-Sync (RFC 6578) since 2.0.
+
+CTag + full ETag diff stays in as the universal fallback for anything exotic.
+
+### 4. ICS rewriting and ETag-on-PUT — both handled, semantic compare is mandatory
+
+Verified empirically against Radicale:
+
+- PUT **does** return an `ETag` header (201 + ETag).
+- The stored ICS is **rewritten** — property order changes (DTSTAMP/SUMMARY
+  reordered on round-trip). Byte or line-based comparison is therefore useless
+  even on the friendliest server; the `Semantic` projection is not an
+  optimization but a requirement.
+- CAS semantics confirmed: `If-Match` with a stale ETag → **412**;
+  `If-None-Match: *` against an existing resource → **412**.
+
+sabre/dav (Nextcloud/Baïkal) documents the complementary case: ETag is returned
+on PUT *most* of the time, but **omitted whenever the server modifies the object
+on storage** — then the client must GET immediately. Our `putEvent` already
+specifies exactly that fallback (`resp.ETag ?? (GET event).etag`).
+
+### 5. Mobile lifecycle — poll only while visible, catch up on resume
+
+SP's Android/iOS apps are WebView wrappers around the same Angular app; plugin
+JS (and thus our `setInterval`) is throttled or frozen while the app is
+backgrounded, and there is no background execution without native support.
+
+**Design consequence:** run the poll interval only while
+`document.visibilityState === 'visible'`; register `visibilitychange`/`focus`
+listeners and fire **one immediate catch-up tick on resume**. Nothing is lost
+while suspended: local changes sit in the retry queue / SP data, remote changes
+are picked up by the catch-up tick, and the sync-token makes the catch-up cheap
+regardless of how long the app was asleep.
