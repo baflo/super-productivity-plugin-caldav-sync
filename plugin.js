@@ -27,6 +27,8 @@ const DEFAULT_CONFIG = {
   password: '',
   enabled: false,
   deleteCompletedTasks: false,
+  addReminders: true,
+  reminderMinutesBefore: 0,
 };
 
 async function getConfig() {
@@ -71,7 +73,9 @@ function eventUidForTask(task) {
   return `sp-task-${task.id}`;
 }
 
-function createEventFromTask(task) {
+function createEventFromTask(task, config) {
+  config = config || {};
+
   let dtstart, dtend;
 
   if (task.dueWithTime) {
@@ -88,6 +92,23 @@ function createEventFromTask(task) {
     dtend = `DTEND;VALUE=DATE:${formatICalDateUTC(endDate)}`;
   }
 
+  // Reminder (VALARM): Super Productivity notifies you at a task's scheduled
+  // time, so mirror that as an alarm on timed events. Optional lead time via
+  // config.reminderMinutesBefore (0 = at the scheduled time, like SP).
+  // All-day (dueDay-only) tasks get no alarm, matching SP (no notification).
+  let alarmLines = [];
+  if (config.addReminders !== false && task.dueWithTime) {
+    const mins = Math.max(0, parseInt(config.reminderMinutesBefore, 10) || 0);
+    const trigger = mins > 0 ? `-PT${mins}M` : 'PT0S';
+    alarmLines = [
+      'BEGIN:VALARM',
+      'ACTION:DISPLAY',
+      `DESCRIPTION:${escapeICalText(task.title)}`,
+      `TRIGGER:${trigger}`,
+      'END:VALARM',
+    ];
+  }
+
   return [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
@@ -101,6 +122,7 @@ function createEventFromTask(task) {
     task.notes ? `DESCRIPTION:${escapeICalText(task.notes)}` : '',
     'STATUS:CONFIRMED',
     'TRANSP:OPAQUE',
+    ...alarmLines,
     'END:VEVENT',
     'END:VCALENDAR',
   ]
@@ -264,7 +286,7 @@ async function flushPendingOps(config) {
           }
           const task = tasksById.get(taskId);
           if (task && shouldSyncTask(task)) {
-            await putCalDAVEvent(config, eventUidForTask(task), createEventFromTask(task));
+            await putCalDAVEvent(config, eventUidForTask(task), createEventFromTask(task, config));
           }
         }
         pendingOps.delete(taskId);
@@ -338,7 +360,7 @@ async function onTaskUpsert(payload, allowDelete = true) {
   if (shouldSyncTask(task)) {
     try {
       await queuePerTask(task.id, () =>
-        putCalDAVEvent(config, eventUidForTask(task), createEventFromTask(task)),
+        putCalDAVEvent(config, eventUidForTask(task), createEventFromTask(task, config)),
       );
       pendingOps.delete(task.id);
       console.log('[CalDAV Sync] Synchronized:', task.title);
@@ -472,7 +494,7 @@ async function manualSync() {
 
     await runPool(tasksToSync, 3, async (task) => {
       try {
-        await putCalDAVEvent(config, eventUidForTask(task), createEventFromTask(task));
+        await putCalDAVEvent(config, eventUidForTask(task), createEventFromTask(task, config));
         pendingOps.delete(task.id);
         synced++;
       } catch (error) {
@@ -551,7 +573,7 @@ window.CalDAVSync = {
       return;
     }
     console.log('Synchronizing task:', task);
-    await putCalDAVEvent(config, eventUidForTask(task), createEventFromTask(task));
+    await putCalDAVEvent(config, eventUidForTask(task), createEventFromTask(task, config));
   },
 
   deleteEvent: async (taskId) => {

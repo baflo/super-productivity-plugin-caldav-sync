@@ -12,6 +12,7 @@ A plugin for Super Productivity that automatically synchronizes scheduled tasks 
 - 📥 **All tasks supported**: Syncs all scheduled tasks, including those imported from Jira/GitHub/etc.
 - 📅 **iCalendar Standard**: RFC 5545 compliant (line folding, exclusive all-day DTEND), compatible with all CalDAV servers (Nextcloud, Radicale, etc.)
 - 🔄 **Automatic Updates**: Changes (title, time, description) are propagated to the calendar
+- ⏰ **Optional reminder alarms** (VALARM) on timed events, with configurable lead time
 - 🗑️ **Cleanup**: Deleted (also batch-deleted) or completed tasks are removed from the calendar; manual sync additionally removes orphaned events
 - 📶 **Retry queue**: Requests that fail (e.g. offline) are queued and retried on the next sync
 
@@ -31,6 +32,8 @@ The plugin is configured via the standard Super Productivity plugin settings
 - **Password**: App-specific password (recommended)
 - **Enable auto sync**: Check the box to activate
 - **Delete completed tasks from calendar**: When enabled, completed tasks are automatically removed from the calendar (default: disabled)
+- **Add reminders (alarms) to calendar events**: Adds a VALARM to timed events so Nextcloud and your phone remind you (default: enabled)
+- **Reminder lead time (minutes before)**: 0 = remind at the task's scheduled time (matches Super Productivity); e.g. 10 = notify 10 minutes before
 
 ### Finding your Calendar URL
 
