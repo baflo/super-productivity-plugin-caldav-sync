@@ -19,6 +19,12 @@ Status: **design draft** — not implemented yet.
 - Creating SP tasks from calendar events.
 - Conflict UI. Conflicts resolve deterministically; at most a snack informs the
   user that one side was overridden.
+- **Syncing reminders/alarms — in either direction (for now).** The VALARM the
+  plugin writes is a static artifact derived purely from config
+  (`addReminders`, `reminderMinutesBefore` = N minutes before DTSTART); it has
+  no relation to SP's task-attached reminders (`reminderId`). Calendar-side
+  VALARM edits are **not** imported, VALARMs are **not** part of the semantic
+  comparison, and SP task reminders are never touched by an import.
 
 ## Core principles
 
@@ -73,8 +79,13 @@ Semantic = {
 
 `semanticOfTask(task, config)` and `semanticOfEvent(parsedVevent)` both produce
 this shape. Normalization (trim, minute rounding, timezone resolution to UTC)
-lives here and nowhere else. `DTSTAMP`, `SEQUENCE`, formatting, and ETags never
-enter a comparison.
+lives here and nowhere else. `DTSTAMP`, `SEQUENCE`, **VALARM**, formatting, and
+ETags never enter a comparison — alarms are write-only output, not synced data.
+
+When writing, the plugin regenerates *its own* VALARM block from config and
+tags it with an `X-SP-CALDAV:1` property inside the VALARM so read-modify-write
+can identify and replace exactly that block; any other VALARMs the user added
+in a calendar client are preserved like all foreign properties (principle 6).
 
 In-memory only:
 
@@ -195,9 +206,12 @@ importToTask(task, sem):
   PluginAPI.updateTask(task.id, taskFieldsFrom(sem))
   // TASK_UPDATE fires from our own updateTask:
   onTaskUpsert: if importing.delete(taskId) → return   // record already updated
-  if task.reminderId && start changed:
-    snack('Reminder for "…" still fires at the old time')   // see resolved Q1
 ```
+
+Reminders are out of scope (see non-goals): an import never touches
+`reminderId`, and no reminder-related UX is attempted for now. Known,
+documented limitation: an SP reminder attached to the task keeps firing at the
+old time after a calendar-side time edit (see resolved Q1).
 
 SP sync then carries the change to other clients; for them the calendar already
 matches (principle 2) → no further writes anywhere. Chain terminates.
@@ -244,7 +258,7 @@ does not depend on it.
 | Task done on A (event deleted); B still has stale undone task | B sees event vanish → `gone`, no recreate (principle 5). SP sync delivers done → B agrees. No flap. |
 | Same field edited in calendar and in SP within one poll interval | Deterministic LWW via `task.updated` vs `LAST-MODIFIED`; all clients pick the same winner; loser side gets a conflict snack. Inherent LWW floor. |
 | Clients with different plugin versions | Semantic (not byte) comparison absorbs formatting differences; only genuine mapping changes across versions could fight — mitigated by minute-granularity normalization. |
-| Clients with different reminder config | Would fight over VALARM lines → sync-relevant config **must** live in synced storage (see open questions); comparison ignores VALARM when `addReminders` is off. |
+| Clients with different reminder config | Cannot cause write storms: VALARM is not part of the semantic comparison, so an alarm difference alone never triggers a write. The alarm only flips when a genuine content write happens — and since plugin config is synced (resolved Q2), configs converge anyway. |
 
 ## Parser requirements
 
@@ -273,13 +287,16 @@ Verified in SP source (master, ~v18.13):
   excludes them (allowlist contains only layout/focus/current-task/context
   actions).
 
-**Design consequence:** import via `updateTask` as planned. If the task has a
-`reminderId` and the imported start time differs, the existing SP reminder keeps
-firing at the *old* time — surface a snack and document it. Long term: propose
-upstream (SP) either allowlisting the scheduling actions for plugins or adding a
-`scheduleTask()` bridge method. Membership in the Today tag after a `dueDay`
-import is reconciled by SP's own day-change/sync effects (`task-due.effects.ts`)
-rather than immediately — acceptable lag, verify UX during implementation.
+**Design consequence:** import via `updateTask` as planned. Reminders are
+excluded from sync scope entirely for now (see non-goals): an import never
+touches `reminderId`, and the plugin's VALARMs are unrelated static artifacts.
+Documented limitation: a task-attached SP reminder keeps firing at the *old*
+time after a calendar-side time edit. Long term: propose upstream (SP) either
+allowlisting the scheduling actions for plugins or adding a `scheduleTask()`
+bridge method — that would let imports move SP reminders along. Membership in
+the Today tag after a `dueDay` import is reconciled by SP's own day-change/sync
+effects (`task-due.effects.ts`) rather than immediately — acceptable lag,
+verify UX during implementation.
 
 ### 2. Plugin config is synced — requirement satisfied
 
