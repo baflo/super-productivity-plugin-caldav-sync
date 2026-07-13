@@ -514,7 +514,9 @@ async function init() {
   // (fall back to the raw hook name for SP versions without the enum member)
   PluginAPI.registerHook(PluginAPI.Hooks.TASK_CREATED || 'taskCreated', onTaskCreated);
 
-  PluginAPI.registerHeaderButton({
+  // Menu entry (burger menu) instead of a header button to keep the
+  // primary UI uncluttered
+  PluginAPI.registerMenuEntry({
     label: 'CalDAV Sync',
     icon: 'cloud_upload',
     onClick: manualSync,

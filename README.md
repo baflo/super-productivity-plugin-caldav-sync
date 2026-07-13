@@ -57,7 +57,7 @@ Once the plugin is activated and configured:
 
 ### Manual Synchronization
 
-Click the **"CalDAV Sync"** button in the header bar to:
+Open the main menu (burger menu) and click the **"CalDAV Sync"** entry to:
 - Synchronize all scheduled tasks
 - Remove orphaned events (`sp-task-*.ics` files in the calendar that no longer belong to a scheduled task)
 - Retry previously failed requests
