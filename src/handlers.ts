@@ -5,6 +5,7 @@ import { flushPendingOps, pendingOps, queuePerTask } from './sync/queue.ts';
 import { consumeImporting } from './sync/import.ts';
 import { deleteLocalTask, pushLocalChange } from './sync/reconcile.ts';
 import { cleanupOrphanedEvents } from './manual-sync.ts';
+import { trace } from './trace.ts';
 
 interface TaskRef {
   task?: Task | null;
@@ -90,7 +91,11 @@ export async function onTaskUpsert(payload: unknown, allowDelete = true): Promis
 
   // Echo suppression: this hook invocation was caused by our own
   // updateTask while importing a calendar edit — do not write it back.
-  if (taskId && consumeImporting(taskId)) return;
+  if (taskId && consumeImporting(taskId)) {
+    trace('hook: import echo suppressed', taskId);
+    return;
+  }
+  trace('hook: upsert', taskId, changes ? Object.keys(changes) : '(no changes field)');
 
   const config = await getConfig();
   if (!config.enabled || !isConfigComplete(config)) return;

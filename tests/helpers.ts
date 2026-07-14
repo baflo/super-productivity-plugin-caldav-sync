@@ -5,6 +5,7 @@
 import type { CalDAVConfig, SnackCfg, SPPluginAPI, Task } from '../src/types.ts';
 import { resetTimezoneCache, setTimezoneOverride } from '../src/caldav/timezone.ts';
 import { resetPullState } from '../src/sync/state.ts';
+import { resetSyncHistory } from '../src/sync/reconcile.ts';
 
 export const snacks: SnackCfg[] = [];
 export const tasksStore: Task[] = [];
@@ -165,5 +166,6 @@ export function resetAll(): void {
   updateTaskCalls.length = 0;
   fakeStorage.clear();
   resetPullState();
+  resetSyncHistory();
   fetchImpl = async () => okResponse();
 }

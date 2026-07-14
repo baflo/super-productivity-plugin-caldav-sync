@@ -192,6 +192,9 @@ window.CalDAVSync.deleteEvent(taskId)            // Delete the event for a task
 window.CalDAVSync.listEvents()                   // List task ids of all events in the calendar
 window.CalDAVSync.cleanupOrphans()               // Remove orphaned events
 window.CalDAVSync.showPendingRetries()           // Show queued (failed) operations
+window.CalDAVSync.enableTrace()                  // Verbose sync tracing (persists across reloads)
+window.CalDAVSync.disableTrace()                 // Turn tracing off
+window.CalDAVSync.showSyncHistory()              // Recent write/import transitions per task
 window.CalDAVSync.pullNow()                      // Run one two-way sync pull tick
 window.CalDAVSync.showPullState()                // Show device-local pull state (ETags, sync token)
 window.CalDAVSync.resetPullState()               // Reset pull state (forces full re-scan)

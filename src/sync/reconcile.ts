@@ -35,6 +35,69 @@ import {
   setRecord,
   type TaskRecord,
 } from './state.ts';
+import { trace } from '../trace.ts';
+
+// ---------------------------------------------------------------------------
+// Ping-pong breaker: detects the cross-direction oscillation pattern
+// (write X → import Y → write X again, or import X → write Y → import X)
+// within a short window and skips the repeating operation instead of playing
+// along. Same-direction sequences (user changing their mind) never match.
+// ---------------------------------------------------------------------------
+interface SyncHistoryEntry {
+  v: string;
+  dir: 'write' | 'import';
+  at: number;
+}
+const syncHistory = new Map<string, SyncHistoryEntry[]>();
+const OSCILLATION_WINDOW_MS = 2 * 60 * 1000;
+let lastOscillationSnackAt = 0;
+
+function recordTransition(taskId: string, dir: 'write' | 'import', v: string): void {
+  const entries = (syncHistory.get(taskId) ?? []).filter(
+    (e) => Date.now() - e.at < OSCILLATION_WINDOW_MS,
+  );
+  entries.push({ v, dir, at: Date.now() });
+  syncHistory.set(taskId, entries.slice(-6));
+}
+
+function isOscillating(taskId: string, dir: 'write' | 'import', v: string): boolean {
+  const now = Date.now();
+  const entries = (syncHistory.get(taskId) ?? []).filter(
+    (e) => now - e.at < OSCILLATION_WINDOW_MS,
+  );
+  const n = entries.length;
+  const opposite = dir === 'write' ? 'import' : 'write';
+  return (
+    n >= 2 &&
+    entries[n - 1].dir === opposite &&
+    entries[n - 1].v !== v &&
+    entries[n - 2].dir === dir &&
+    entries[n - 2].v === v
+  );
+}
+
+function breakOscillation(taskId: string, dir: 'write' | 'import', title: string): void {
+  console.error(
+    `[CalDAV Sync] Ping-pong detected (${dir}) for task ${taskId} — skipping this update to break the loop. ` +
+      'If this repeats: check for an outdated plugin version on another device and run window.CalDAVSync.enableTrace().',
+  );
+  if (Date.now() - lastOscillationSnackAt > 60000) {
+    lastOscillationSnackAt = Date.now();
+    PluginAPI.showSnack({
+      msg: `Sync loop detected for "${title}" — paused this update (see console)`,
+      type: 'WARNING',
+    });
+  }
+}
+
+export function getSyncHistory(): Map<string, SyncHistoryEntry[]> {
+  return syncHistory;
+}
+
+export function resetSyncHistory(): void {
+  syncHistory.clear();
+  lastOscillationSnackAt = 0;
+}
 
 export interface ReconcileStats {
   imported: number;
@@ -75,12 +138,17 @@ async function writeEventCAS(
   task: Task,
   sem: Semantic,
   record: TaskRecord,
-): Promise<TaskRecord | null> {
+): Promise<TaskRecord | null | 'skipped'> {
+  if (isOscillating(task.id, 'write', scheduleKey(sem))) {
+    breakOscillation(task.id, 'write', task.title);
+    return 'skipped';
+  }
   const tz = await getEventTimezone(config);
   const ics = createEventFromTask(taskWithSemantic(task, sem), config, tz);
   const uid = eventUidForTask(task);
   const opts =
     record.etag && !record.gone ? { ifMatch: record.etag } : { ifNoneMatch: true };
+  trace('PUT', task.id, opts, 'schedule:', scheduleKey(sem));
   try {
     const result = await putCalDAVEvent(config, uid, ics, opts);
     let etag = result.etag ?? null;
@@ -88,11 +156,39 @@ async function writeEventCAS(
       // Server modified the object on storage (sabre) — learn the real ETag
       etag = (await getCalDAVEvent(config, uid))?.etag ?? null;
     }
+    recordTransition(task.id, 'write', scheduleKey(sem));
     return { etag, snap: sem, gone: false };
   } catch (error) {
-    if (error instanceof PreconditionFailedError) return null;
+    if (error instanceof PreconditionFailedError) {
+      trace('PUT 412', task.id);
+      return null;
+    }
     throw error;
   }
+}
+
+/** Import guarded by the ping-pong breaker; returns whether it was applied */
+async function importGuarded(
+  task: Task,
+  sem: Semantic,
+  stats: ReconcileStats | undefined,
+  taskId: string,
+): Promise<boolean> {
+  if (isOscillating(taskId, 'import', scheduleKey(sem))) {
+    breakOscillation(taskId, 'import', task.title);
+    return false;
+  }
+  const didChange = await applySemanticToTask(task, sem);
+  if (didChange) {
+    recordTransition(taskId, 'import', scheduleKey(sem));
+    if (stats) {
+      stats.imported++;
+      stats.importedTaskIds.push(taskId);
+    }
+  } else if (stats) {
+    stats.unchanged++;
+  }
+  return didChange;
 }
 
 /** Deletion always wins (existence is owned by SP): CAS first, force on 412 */
@@ -142,6 +238,7 @@ export async function pushLocalChange(config: CalDAVConfig, taskSnapshot: Task):
   if (record.snap && semanticEqual(desired, record.snap)) return false; // no semantic change
 
   const written = await writeEventCAS(config, task, desired, record);
+  if (written === 'skipped') return false;
   if (written) {
     setRecord(state, task.id, written);
     savePullState(state);
@@ -286,6 +383,16 @@ export async function reconcileWithRemote(
     remoteChanged = record.etag !== null;
   }
 
+  trace('reconcile', taskId, {
+    localChanged,
+    remoteChanged,
+    recEtag: record.etag,
+    remoteEtag: fetched?.etag ?? null,
+    desired: desired ? scheduleKey(desired) + ' "' + desired.title + '"' : null,
+    remote: remote ? scheduleKey(remote) + ' "' + remote.title + '"' : null,
+    snap: record.snap ? scheduleKey(record.snap) + ' "' + record.snap.title + '"' : null,
+  });
+
   // Case 1: nothing to do
   if (!localChanged && !remoteChanged) {
     if (stats) stats.unchanged++;
@@ -309,20 +416,14 @@ export async function reconcileWithRemote(
       if (stats) stats.deletedEvents++;
       return;
     }
-    const didChange = await applySemanticToTask(task, remote as Semantic);
-    setRecord(state, taskId, {
-      etag: fetched.etag ?? null,
-      snap: remote as Semantic,
-      gone: false,
-    });
-    savePullState(state);
-    if (stats) {
-      if (didChange) {
-        stats.imported++;
-        stats.importedTaskIds.push(taskId);
-      } else {
-        stats.unchanged++;
-      }
+    const applied = await importGuarded(task, remote as Semantic, stats, taskId);
+    if (applied || semanticEqual(remote, semanticOfTask(task))) {
+      setRecord(state, taskId, {
+        etag: fetched.etag ?? null,
+        snap: remote as Semantic,
+        gone: false,
+      });
+      savePullState(state);
     }
     return;
   }
@@ -339,6 +440,7 @@ export async function reconcileWithRemote(
     if (!task) return;
     const baseRecord = fetched ? record : { ...record, etag: null, gone: true };
     const written = await writeEventCAS(config, task, desired, baseRecord);
+    if (written === 'skipped') return;
     if (!written) {
       if (depth < MAX_CAS_RETRIES) {
         const again = await getCalDAVEvent(config, eventUidForTask(task));
@@ -368,7 +470,7 @@ export async function reconcileWithRemote(
       etag: null,
       gone: true,
     });
-    if (written) {
+    if (written && written !== 'skipped') {
       setRecord(state, taskId, written);
       savePullState(state);
       if (stats) stats.pushed++;
@@ -401,6 +503,7 @@ export async function reconcileWithRemote(
       etag: fetched.etag ?? record.etag,
       gone: false,
     });
+    if (written === 'skipped') return; // breaker: skip both sides this round
     if (!written) {
       if (depth < MAX_CAS_RETRIES) {
         const again = await getCalDAVEvent(config, eventUidForTask(task));
@@ -421,11 +524,7 @@ export async function reconcileWithRemote(
   }
 
   if (!semanticEqual(merged, desired)) {
-    await applySemanticToTask(task, merged);
-    if (stats) {
-      stats.imported++;
-      stats.importedTaskIds.push(taskId);
-    }
+    await importGuarded(task, merged, stats, taskId);
   } else if (semanticEqual(merged, remote) && stats) {
     stats.unchanged++;
   }

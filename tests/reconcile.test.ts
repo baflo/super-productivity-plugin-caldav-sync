@@ -286,6 +286,54 @@ test('stale poll snapshot: reconcile re-reads the task and does not revert a new
   assert.equal(updateTaskCalls.length, 0);
 });
 
+test('ping-pong breaker: write→import→write of the same schedule is skipped with a warning', async () => {
+  const config = await getConfig();
+  const timeA = Date.UTC(2026, 6, 24, 9, 0);
+  const timeB = Date.UTC(2026, 6, 24, 11, 0);
+  const t = task({ id: 'osc', title: 'Flip', dueWithTime: timeA, timeEstimate: 3600000 });
+  tasksStore.push(t);
+
+  // 1) write A
+  await pushLocalChange(config, t);
+  // 2) import B (remote-only change)
+  const fetchedB = {
+    ics: ICS(['LAST-MODIFIED:20991231T000000Z', 'SUMMARY:Flip', 'DTSTART:20260724T110000Z', 'DTEND:20260724T120000Z']),
+    etag: '"eB"',
+  };
+  await reconcileWithRemote(config, tasksStore[0], 'osc', fetchedB);
+  assert.equal(tasksStore[0].dueWithTime, timeB, 'B imported');
+
+  // 3) something flips the task back to A (e.g. SP-sync op battle) → the
+  //    write of A again matches the write→import→write pattern → skipped
+  tasksStore[0].dueWithTime = timeA;
+  fetchCalls.length = 0;
+  const didWrite = await pushLocalChange(config, tasksStore[0]);
+
+  assert.equal(didWrite, false, 'oscillating write skipped');
+  assert.equal(fetchCalls.filter(([, o]) => o.method === 'PUT').length, 0);
+  assert.ok(snacks.some((s) => s.type === 'WARNING' && s.msg.includes('Sync loop')));
+
+  // A different (third) value is NOT an oscillation and goes through
+  tasksStore[0].dueWithTime = Date.UTC(2026, 6, 24, 15, 0);
+  const wrote = await pushLocalChange(config, tasksStore[0]);
+  assert.equal(wrote, true, 'genuine new value still written');
+});
+
+test('user changing their mind (write→write→write) never triggers the breaker', async () => {
+  const config = await getConfig();
+  const t = task({ id: 'mind', title: 'M', dueWithTime: Date.UTC(2026, 6, 24, 9, 0), timeEstimate: 3600000 });
+  tasksStore.push(t);
+
+  await pushLocalChange(config, tasksStore[0]);
+  tasksStore[0].dueWithTime = Date.UTC(2026, 6, 24, 11, 0);
+  await pushLocalChange(config, tasksStore[0]);
+  tasksStore[0].dueWithTime = Date.UTC(2026, 6, 24, 9, 0); // back again
+  const wrote = await pushLocalChange(config, tasksStore[0]);
+
+  assert.equal(wrote, true, 'same-direction back-and-forth is fine');
+  assert.equal(fetchCalls.filter(([, o]) => o.method === 'PUT').length, 3);
+});
+
 test('done task with deleteCompletedTasks: both-changed still resolves to delete', async () => {
   configStore.deleteCompletedTasks = true;
   const config = await getConfig();

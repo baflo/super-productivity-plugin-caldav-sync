@@ -102,6 +102,11 @@ test('timezone-aware events: TZID datetimes, embedded VTIMEZONE, DST-correct wal
   assert.match(utc, /DTSTART:20260714T100000Z/);
 });
 
+test('events carry LAST-MODIFIED for symmetric LWW across clients', () => {
+  const ics = createEventFromTask(task({ id: 'lm', title: 'X', dueDay: '2026-07-10' }), cfg());
+  assert.match(ics, /LAST-MODIFIED:\d{8}T\d{6}Z/);
+});
+
 test('escaping normalizes CR/CRLF and escapes special characters', () => {
   assert.equal(escapeICalText('a\r\nb\rc\nd'), 'a\\nb\\nc\\nd');
   assert.equal(escapeICalText('a;b,c\\d'), 'a\\;b\\,c\\\\d');

@@ -56,6 +56,7 @@ export function createEventFromTask(
     'BEGIN:VEVENT',
     `UID:${eventUidForTask(task)}`,
     `DTSTAMP:${formatICalDateTimeUTC(new Date())}`,
+    `LAST-MODIFIED:${formatICalDateTimeUTC(new Date())}`,
     dtstart,
     dtend,
     `SUMMARY:${escapeICalText(task.title)}`,

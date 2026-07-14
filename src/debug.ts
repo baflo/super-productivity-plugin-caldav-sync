@@ -7,6 +7,8 @@ import { cleanupOrphanedEvents, manualSync } from './manual-sync.ts';
 import { pollTick } from './sync/poll.ts';
 import { loadPullState, resetPullState } from './sync/state.ts';
 import { getEventTimezone } from './caldav/timezone.ts';
+import { getSyncHistory } from './sync/reconcile.ts';
+import { setTraceEnabled } from './trace.ts';
 
 export function installDebug(): void {
   const globalObj = (typeof window !== 'undefined' ? window : globalThis) as Record<
@@ -95,6 +97,16 @@ export function installDebug(): void {
     },
 
     resetPullState,
+
+    enableTrace: () => setTraceEnabled(true),
+    disableTrace: () => setTraceEnabled(false),
+
+    showSyncHistory: () => {
+      const history = Object.fromEntries(getSyncHistory());
+      console.log('=== Recent write/import transitions per task ===');
+      console.log(history);
+      return history;
+    },
 
     manualSync,
   };
