@@ -11,6 +11,7 @@
 import { getConfig } from './config.ts';
 import { onTaskComplete, onTaskCreated, onTaskDelete, onTaskUpsert } from './handlers.ts';
 import { manualSync } from './manual-sync.ts';
+import { startPolling } from './sync/poll.ts';
 import { installDebug } from './debug.ts';
 
 async function init(): Promise<void> {
@@ -29,9 +30,12 @@ async function init(): Promise<void> {
     onClick: manualSync,
   });
 
+  // Pull path (two-way sync): no-op unless twoWaySync is enabled in config
+  startPolling();
+
   const config = await getConfig();
   if (config.enabled) {
-    console.log('[CalDAV Sync] Enabled');
+    console.log('[CalDAV Sync] Enabled', config.twoWaySync ? '(two-way)' : '(push-only)');
   }
 }
 

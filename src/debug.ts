@@ -4,6 +4,8 @@ import { createEventFromTask } from './ical/build.ts';
 import { deleteCalDAVEvent, listCalDAVTaskIds, putCalDAVEvent } from './caldav/client.ts';
 import { pendingOps } from './sync/queue.ts';
 import { cleanupOrphanedEvents, manualSync } from './manual-sync.ts';
+import { pollTick } from './sync/poll.ts';
+import { loadPullState, resetPullState } from './sync/state.ts';
 
 export function installDebug(): void {
   const globalObj = (typeof window !== 'undefined' ? window : globalThis) as Record<
@@ -74,6 +76,23 @@ export function installDebug(): void {
       console.log(Object.fromEntries(pendingOps));
       return new Map(pendingOps);
     },
+
+    pullNow: async () => {
+      const config = await getConfig();
+      const stats = await pollTick(config);
+      console.log('[CalDAV Sync] Pull result:', stats);
+      return stats;
+    },
+
+    showPullState: async () => {
+      const config = await getConfig();
+      const state = loadPullState(config.calendarUrl);
+      console.log('=== Pull state (device-local) ===');
+      console.log(state);
+      return state;
+    },
+
+    resetPullState,
 
     manualSync,
   };

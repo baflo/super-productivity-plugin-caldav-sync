@@ -33,14 +33,31 @@ export interface StubResponse {
   status: number;
   statusText: string;
   text: () => Promise<string>;
+  headers: { get: (name: string) => string | null };
 }
 
-export function okResponse(status = 200, body = ''): StubResponse {
-  return { ok: true, status, statusText: 'OK', text: async () => body };
+export function okResponse(
+  status = 200,
+  body = '',
+  headers: Record<string, string> = {},
+): StubResponse {
+  return {
+    ok: true,
+    status,
+    statusText: 'OK',
+    text: async () => body,
+    headers: { get: (name) => headers[name] ?? headers[name.toLowerCase()] ?? null },
+  };
 }
 
 export function errResponse(status: number, statusText: string): StubResponse {
-  return { ok: false, status, statusText, text: async () => '' };
+  return {
+    ok: false,
+    status,
+    statusText,
+    text: async () => '',
+    headers: { get: () => null },
+  };
 }
 
 type FetchImpl = (url: string, opts?: RequestInit) => Promise<StubResponse>;
@@ -50,14 +67,54 @@ export function setFetchImpl(fn: FetchImpl): void {
   fetchImpl = fn;
 }
 
-class FakeDOMParser {
-  parseFromString(text: string): Document {
-    const hrefs = [...text.matchAll(/<d:href>([^<]*)<\/d:href>/g)].map((m) => ({
-      textContent: m[1],
-    }));
-    return { getElementsByTagNameNS: () => hrefs } as unknown as Document;
+/**
+ * Prefix-agnostic mini DOM double: getElementsByTagNameNS matches elements
+ * by local name in the wrapped text (any or no namespace prefix), and the
+ * returned elements support nested getElementsByTagNameNS + textContent —
+ * enough for parseMultistatus.
+ */
+class FakeElement {
+  private readonly content: string;
+  constructor(content: string) {
+    this.content = content;
+  }
+  get textContent(): string {
+    return this.content.replace(/<[^>]*>/g, '');
+  }
+  getElementsByTagNameNS(_ns: string, local: string): FakeElement[] {
+    const re = new RegExp(
+      `<(?:[\\w-]+:)?${local}(?:\\s[^>]*)?>([\\s\\S]*?)</(?:[\\w-]+:)?${local}>`,
+      'g',
+    );
+    return [...this.content.matchAll(re)].map((m) => new FakeElement(m[1]));
   }
 }
+
+class FakeDOMParser {
+  parseFromString(text: string): Document {
+    return new FakeElement(text) as unknown as Document;
+  }
+}
+
+class FakeStorage {
+  private readonly data = new Map<string, string>();
+  getItem(key: string): string | null {
+    return this.data.get(key) ?? null;
+  }
+  setItem(key: string, value: string): void {
+    this.data.set(key, value);
+  }
+  removeItem(key: string): void {
+    this.data.delete(key);
+  }
+  clear(): void {
+    this.data.clear();
+  }
+}
+
+export const fakeStorage = new FakeStorage();
+
+export const updateTaskCalls: Array<[string, Partial<Task>]> = [];
 
 export function installStubs(): void {
   resetConfig();
@@ -76,6 +133,11 @@ export function installStubs(): void {
     getConfig: (async () => ({ ...configStore })) as SPPluginAPI['getConfig'],
     getTasks: async () => tasksStore.slice(),
     getArchivedTasks: async () => archivedTasksStore.slice(),
+    updateTask: async (taskId: string, updates: Partial<Task>) => {
+      updateTaskCalls.push([taskId, updates]);
+      const t = tasksStore.find((x) => x.id === taskId);
+      if (t) Object.assign(t, updates);
+    },
   };
   (globalThis as Record<string, unknown>).PluginAPI = api;
   (globalThis as Record<string, unknown>).fetch = (url: string, opts?: RequestInit) => {
@@ -83,6 +145,7 @@ export function installStubs(): void {
     return fetchImpl(url, opts);
   };
   (globalThis as Record<string, unknown>).DOMParser = FakeDOMParser;
+  (globalThis as Record<string, unknown>).localStorage = fakeStorage;
 }
 
 export function resetAll(): void {
@@ -91,5 +154,7 @@ export function resetAll(): void {
   tasksStore.length = 0;
   archivedTasksStore.length = 0;
   fetchCalls.length = 0;
+  updateTaskCalls.length = 0;
+  fakeStorage.clear();
   fetchImpl = async () => okResponse();
 }

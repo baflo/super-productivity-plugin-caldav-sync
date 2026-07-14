@@ -29,6 +29,8 @@ export interface CalDAVConfig {
   deleteCompletedTasks: boolean;
   addReminders: boolean;
   reminderMinutesBefore: number;
+  /** Import calendar-side edits (title, date/time, duration, notes) back into SP */
+  twoWaySync: boolean;
 }
 
 export interface SnackCfg {

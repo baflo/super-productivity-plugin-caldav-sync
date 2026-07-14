@@ -2,7 +2,7 @@
 
 A plugin for Super Productivity that automatically synchronizes scheduled tasks to a CalDAV calendar.
 
-> **⚠️ One-way sync only:** This plugin writes **from Super Productivity to your calendar** — never the other way around. Events created or edited in the calendar are **not** imported into Super Productivity, and changes made to synced events in the calendar will be overwritten on the next sync. Use a dedicated calendar for this plugin.
+> **⚠️ Sync direction:** By default this plugin writes **from Super Productivity to your calendar** only. With the optional **two-way sync** setting, edits made in calendar apps (title, date/time, duration, notes) are imported back — but creating, completing and deleting tasks always stays exclusive to Super Productivity. Use a dedicated calendar for this plugin.
 
 ## ✨ Features
 
@@ -37,6 +37,7 @@ The plugin is configured via the standard Super Productivity plugin settings
 - **Delete completed tasks from calendar**: When enabled, completed tasks are automatically removed from the calendar (default: disabled)
 - **Add reminders (alarms) to calendar events**: Adds a VALARM to timed events so Nextcloud and your phone remind you (default: enabled)
 - **Reminder lead time (minutes before)**: 0 = remind at the task's scheduled time (matches Super Productivity); e.g. 10 = notify 10 minutes before
+- **Two-way sync: import calendar edits**: Polls the calendar (~45 s while the app is open) and imports edits made in calendar apps back into Super Productivity (default: disabled)
 
 ### Finding your Calendar URL
 
@@ -60,6 +61,21 @@ Once the plugin is activated and configured:
 - Deleting the task or removing the due date also deletes the event
 - When a task is marked as completed, the event is removed from the calendar (if "Delete completed tasks from calendar" is enabled)
 - Successful syncs are silent (see console logs); only errors show a notification
+
+### Two-Way Sync (optional)
+
+When **two-way sync** is enabled, the plugin polls the calendar while the app
+is open (cheap CTag/sync-token check every ~45 s, immediately on app focus) and
+imports calendar-side edits into the matching task:
+
+- **Imported**: title, date/time (timezone-aware), duration (→ time estimate), notes
+- **Not imported**: reminders/alarms (write-only, from plugin config), completion, deletion —
+  an event deleted in the calendar is *not* re-created automatically, but reappears
+  when the task changes or on the next manual sync
+- An empty description in the calendar never wipes existing task notes
+- **Known limitation**: a Super Productivity reminder attached to the task keeps
+  firing at the old time after a calendar-side time change (the plugin API offers
+  no way to move SP reminders yet)
 
 ### Manual Synchronization
 
@@ -169,6 +185,9 @@ window.CalDAVSync.deleteEvent(taskId)            // Delete the event for a task
 window.CalDAVSync.listEvents()                   // List task ids of all events in the calendar
 window.CalDAVSync.cleanupOrphans()               // Remove orphaned events
 window.CalDAVSync.showPendingRetries()           // Show queued (failed) operations
+window.CalDAVSync.pullNow()                      // Run one two-way sync pull tick
+window.CalDAVSync.showPullState()                // Show device-local pull state (ETags, sync token)
+window.CalDAVSync.resetPullState()               // Reset pull state (forces full re-scan)
 window.CalDAVSync.manualSync()                   // Run a full manual sync
 ```
 

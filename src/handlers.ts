@@ -4,6 +4,7 @@ import { shouldDeleteTask, shouldSyncTask, eventUidForTask, eventUidForTaskId } 
 import { createEventFromTask } from './ical/build.ts';
 import { deleteCalDAVEvent, putCalDAVEvent } from './caldav/client.ts';
 import { flushPendingOps, pendingOps, queuePerTask } from './sync/queue.ts';
+import { consumeImporting } from './sync/import.ts';
 
 interface TaskRef {
   task?: Task | null;
@@ -42,10 +43,14 @@ export function extractDeletedTaskIds(payload: unknown): string[] {
 // TASK_UPDATE that follows right after when creating a task in the schedule
 // view
 export async function onTaskUpsert(payload: unknown, allowDelete = true): Promise<void> {
+  const { task: payloadTask, taskId, changes } = extractTaskRef(payload);
+
+  // Echo suppression: this hook invocation was caused by our own
+  // updateTask while importing a calendar edit — do not write it back.
+  if (taskId && consumeImporting(taskId)) return;
+
   const config = await getConfig();
   if (!config.enabled || !isConfigComplete(config)) return;
-
-  const { task: payloadTask, taskId, changes } = extractTaskRef(payload);
 
   if (
     changes &&

@@ -8,6 +8,7 @@ export const DEFAULT_CONFIG: CalDAVConfig = {
   deleteCompletedTasks: false,
   addReminders: true,
   reminderMinutesBefore: 0,
+  twoWaySync: false,
 };
 
 export async function getConfig(): Promise<CalDAVConfig> {

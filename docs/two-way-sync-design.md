@@ -1,6 +1,23 @@
 # Two-Way Sync Design (SP ⇄ CalDAV)
 
-Status: **design draft** — not implemented yet.
+## Roadmap
+
+- **Phase 0 — module structure** ✅ (v2.2.2): TypeScript modules, esbuild
+  bundle, unit tests in-repo.
+- **Phase 1 — parser + pull path** ✅ (v2.3.0): iCal parser, `Semantic`
+  projection, CTag/sync-token polling with visibility handling, import via
+  `updateTask` with echo suppression. Interim conflict rule: import is skipped
+  while a local op is queued (`pendingOps`); otherwise remote wins on
+  difference. Per-task ETags are already recorded device-locally.
+- **Phase 2 — three-way state + CAS**: `{etag, snap, gone}` records, If-Match
+  on all writes with 412 → reconcile, GET-after-PUT fallback, full `reconcile`
+  state machine with field merge + deterministic LWW.
+- **Phase 3 — multi-writer hardening**: semantic idempotence before every
+  write, no-eager-recreate via `gone`, read-modify-write with property
+  preservation and the `X-SP-CALDAV` VALARM marker.
+- **Phase 4 — polish + migration**: bootstrap for existing calendars, conflict
+  snacks, manual sync as full reconcile, upstream proposal for a plugin
+  scheduling API.
 
 ## Goals
 

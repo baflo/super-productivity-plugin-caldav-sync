@@ -41,6 +41,12 @@
       "description": "0 = remind at the task's scheduled time (matches Super Productivity). e.g. 10 = notify 10 minutes before.",
       "default": 0,
       "minimum": 0
+    },
+    "twoWaySync": {
+      "type": "boolean",
+      "title": "Two-way sync: import calendar edits",
+      "description": "Polls the calendar and imports edits (title, date/time, duration, notes) made in calendar apps back into Super Productivity. Creating/deleting tasks stays exclusive to Super Productivity.",
+      "default": false
     }
   },
   "required": ["calendarUrl", "username", "password"]
