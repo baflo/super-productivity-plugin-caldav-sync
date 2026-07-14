@@ -32,6 +32,8 @@ export interface PullStats {
   unchanged: number;
   skipped: number;
   removedRemotely: number;
+  /** Tasks that just received calendar values — do not push them right back */
+  importedTaskIds: string[];
 }
 
 const BASE_INTERVAL_MS = 45000;
@@ -40,7 +42,7 @@ const MAX_BACKOFF = 16;
 
 let timer: ReturnType<typeof setTimeout> | null = null;
 let backoff = 1;
-let isTicking = false;
+let inFlightTick: Promise<PullStats> | null = null;
 let started = false;
 
 function isVisible(): boolean {
@@ -95,21 +97,23 @@ export function startPolling(): void {
   scheduleNext(5000);
 }
 
-export async function pollTick(config: CalDAVConfig): Promise<PullStats> {
+// Concurrent callers (scheduled cycle vs. manual sync) share one tick: the
+// second caller AWAITS the running tick instead of silently skipping —
+// otherwise a manual sync could push without having pulled.
+export function pollTick(config: CalDAVConfig): Promise<PullStats> {
+  if (inFlightTick) return inFlightTick;
   const stats: PullStats = {
     upToDate: false,
     imported: 0,
     unchanged: 0,
     skipped: 0,
     removedRemotely: 0,
+    importedTaskIds: [],
   };
-  if (isTicking) return stats;
-  isTicking = true;
-  try {
-    return await pollTickInner(config, stats);
-  } finally {
-    isTicking = false;
-  }
+  inFlightTick = pollTickInner(config, stats).finally(() => {
+    inFlightTick = null;
+  });
+  return inFlightTick;
 }
 
 async function pollTickInner(config: CalDAVConfig, stats: PullStats): Promise<PullStats> {
@@ -195,8 +199,12 @@ async function pollTickInner(config: CalDAVConfig, stats: PullStats): Promise<Pu
         stats.unchanged++;
       } else {
         const didChange = await applySemanticToTask(task, remoteSem);
-        if (didChange) stats.imported++;
-        else stats.unchanged++;
+        if (didChange) {
+          stats.imported++;
+          stats.importedTaskIds.push(taskId);
+        } else {
+          stats.unchanged++;
+        }
       }
       const effectiveEtag = fetched.etag ?? etag;
       if (effectiveEtag) state.etags[taskId] = effectiveEtag;

@@ -203,6 +203,74 @@ test('empty DESCRIPTION does not wipe existing task notes', async () => {
   assert.equal('notes' in updates, false, 'notes untouched');
 });
 
+test('all-day -> timed edit imports the duration even for tasks without estimate', async () => {
+  tasksStore.push(task({ id: 't1', title: 'X', dueDay: '2026-07-14', timeEstimate: 0 }));
+  stubServer({
+    ctag: 'c1',
+    listing: [['/cal/sp-task-t1.ics', '"e1"']],
+    events: {
+      'sp-task-t1.ics': EVENT_ICS('sp-task-t1', [
+        'SUMMARY:X',
+        'DTSTART:20260714T140000Z',
+        'DTEND:20260714T150000Z',
+      ]),
+    },
+  });
+
+  await pollTick(await getConfig());
+
+  const [, updates] = updateTaskCalls[0];
+  assert.equal(updates.dueWithTime, Date.UTC(2026, 6, 14, 14, 0));
+  assert.equal(updates.dueDay, null);
+  assert.equal(updates.timeEstimate, 3600000, 'duration imported on transition');
+});
+
+test('already-timed task without estimate: unrelated edit does not materialize an estimate', async () => {
+  tasksStore.push(
+    task({ id: 't1', title: 'Alt', dueWithTime: Date.UTC(2026, 6, 14, 14, 0), timeEstimate: 0 }),
+  );
+  stubServer({
+    ctag: 'c1',
+    listing: [['/cal/sp-task-t1.ics', '"e1"']],
+    events: {
+      'sp-task-t1.ics': EVENT_ICS('sp-task-t1', [
+        'SUMMARY:Neu',
+        'DTSTART:20260714T140000Z',
+        'DTEND:20260714T150000Z',
+      ]),
+    },
+  });
+
+  await pollTick(await getConfig());
+
+  const [, updates] = updateTaskCalls[0];
+  assert.equal(updates.title, 'Neu');
+  assert.equal('timeEstimate' in updates, false, '1h event == no-estimate default');
+});
+
+test('concurrent pollTick callers share one tick instead of skipping', async () => {
+  const t = task({ id: 't1', title: 'Same', dueDay: '2026-07-14' });
+  tasksStore.push(t);
+  setFetchImpl(async (_url, init = {}) => {
+    if (init.method === 'PROPFIND' && (init.headers as Record<string, string>)?.Depth === '0') {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      return okResponse(207, CTAG_RESP('c1'));
+    }
+    if (init.method === 'PROPFIND') return okResponse(207, ETAG_LISTING([]));
+    return okResponse();
+  });
+  const config = await getConfig();
+
+  const [s1, s2] = await Promise.all([pollTick(config), pollTick(config)]);
+
+  assert.deepEqual(s1, s2, 'second caller awaited the same tick');
+  assert.equal(
+    fetchCalls.filter(([, o]) => o.method === 'PROPFIND' && (o.headers as Record<string, string>)?.Depth === '0').length,
+    1,
+    'only one Depth:0 PROPFIND despite two callers',
+  );
+});
+
 test('timed -> all-day edit clears dueWithTime and sets dueDay', async () => {
   tasksStore.push(
     task({ id: 't1', title: 'X', dueWithTime: Date.UTC(2026, 6, 14, 9, 0), timeEstimate: 3600000 }),

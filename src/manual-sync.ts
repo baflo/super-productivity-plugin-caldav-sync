@@ -87,18 +87,25 @@ export async function manualSync(): Promise<void> {
     // Pull FIRST: import pending calendar edits before pushing, otherwise the
     // push would overwrite them with the (older) task state.
     let imported = 0;
+    let importedTaskIds = new Set<string>();
     if (config.twoWaySync) {
       try {
         const pullStats = await pollTick(config);
         imported = pullStats.imported;
+        importedTaskIds = new Set(pullStats.importedTaskIds);
       } catch (error) {
         console.warn('[CalDAV Sync] Pull during manual sync failed:', error);
       }
     }
 
-    // getTasks AFTER the pull so the push sees the imported values
+    // getTasks AFTER the pull so the push sees the imported values. Tasks
+    // that were just imported are excluded from the push entirely: their
+    // event IS the newer truth, and re-pushing them could revert the
+    // calendar if the task store has not caught up with the import yet.
     const tasks = await PluginAPI.getTasks();
-    const tasksToSync = tasks.filter(shouldSyncTask);
+    const tasksToSync = tasks.filter(
+      (task) => shouldSyncTask(task) && !importedTaskIds.has(task.id),
+    );
 
     let synced = 0;
     let errors = 0;

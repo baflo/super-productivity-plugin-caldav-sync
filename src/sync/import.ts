@@ -56,7 +56,15 @@ export function taskUpdatesFromSemantic(task: Task, sem: Semantic): Partial<Task
       : null;
     if (taskStart !== sem.start) updates.dueWithTime = sem.start;
     if (task.dueDay) updates.dueDay = null;
-    const taskDurationM = Math.round((task.timeEstimate || 3600000) / MINUTE_MS);
+    // A task without estimate maps to a 1h event on push, so for already
+    // timed tasks the 1h default keeps unrelated edits from materializing
+    // an estimate. On the all-day/unscheduled -> timed transition however
+    // the event duration must always be taken over — without this, moving
+    // an all-day event onto a time slot never imported the duration.
+    const wasTimed = !!task.dueWithTime;
+    const taskDurationM = wasTimed
+      ? Math.round((task.timeEstimate || 3600000) / MINUTE_MS)
+      : Math.round((task.timeEstimate || 0) / MINUTE_MS);
     if (taskDurationM !== sem.durationM) {
       updates.timeEstimate = sem.durationM * MINUTE_MS;
     }

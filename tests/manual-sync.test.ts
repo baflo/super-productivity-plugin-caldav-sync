@@ -88,9 +88,10 @@ test('error summary includes first error detail with HTTP status', async () => {
   assert.equal(pendingOps.get('e1'), 'put');
 });
 
-test('manual sync with two-way: pulls calendar edits BEFORE pushing, push uses imported values', async () => {
+test('manual sync with two-way: pulls calendar edits BEFORE pushing and does not push them back', async () => {
   configStore.twoWaySync = true;
   tasksStore.push(task({ id: 't1', title: 'Alt', dueDay: '2026-07-14' }));
+  tasksStore.push(task({ id: 't2', title: 'Anderer', dueDay: '2026-07-15' }));
   const editedIcs = [
     'BEGIN:VCALENDAR',
     'BEGIN:VEVENT',
@@ -130,11 +131,15 @@ test('manual sync with two-way: pulls calendar edits BEFORE pushing, push uses i
   // 1) the calendar edit was imported…
   assert.equal(updateTaskCalls.length, 1);
   assert.equal(updateTaskCalls[0][1].title, 'Kalender-Titel');
-  // 2) …and the push that followed used the imported title, not the stale one
+  // 2) …and the just-imported task is NOT pushed back (its event is the
+  //    newer truth); other tasks still get pushed
   const puts = fetchCalls.filter(([, o]) => o.method === 'PUT');
   assert.equal(puts.length, 1);
-  assert.match(String(puts[0][1].body), /SUMMARY:Kalender-Titel/);
-  assert.doesNotMatch(String(puts[0][1].body), /SUMMARY:Alt/);
+  assert.ok(puts[0][0].endsWith('sp-task-t2.ics'), 'only the other task pushed');
+  assert.ok(
+    !fetchCalls.some(([u, o]) => o.method === 'PUT' && u.endsWith('sp-task-t1.ics')),
+    'imported task not pushed back',
+  );
   // 3) pull happened before the push (request order)
   const methods = fetchCalls.map(([, o]) => o.method);
   assert.ok(methods.indexOf('GET') < methods.indexOf('PUT'), 'pull before push');
