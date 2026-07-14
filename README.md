@@ -177,6 +177,11 @@ npm run package   # test + build + dist/caldav-sync.zip (installable ZIP)
 There are no runtime dependencies — `node_modules` is dev-tooling only
 (esbuild, TypeScript). Do not edit `dist/plugin.js` by hand.
 
+CI builds and tests every push/PR and uploads the installable ZIP as a
+workflow artifact. To publish a release: bump the version in `manifest.json`
+and `package.json`, then push a matching tag (`git tag v2.5.2 && git push
+--tags`) — the workflow attaches `caldav-sync.zip` to a GitHub release.
+
 ### Console Logs
 
 All plugin logs have the prefix `[CalDAV Sync]`.
