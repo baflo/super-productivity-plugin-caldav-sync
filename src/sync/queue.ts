@@ -1,8 +1,5 @@
-import type { CalDAVConfig } from '../types.ts';
-import { createEventFromTask } from '../ical/build.ts';
-import { deleteCalDAVEvent, putCalDAVEvent } from '../caldav/client.ts';
-import { eventUidForTask, eventUidForTaskId, shouldSyncTask } from '../rules.ts';
-import { getEventTimezone } from '../caldav/timezone.ts';
+import type { CalDAVConfig, Task } from '../types.ts';
+import { deleteLocalTask, pushLocalChange } from './reconcile.ts';
 
 // In-memory retry queue for requests that failed, e.g. while offline
 export const pendingOps = new Map<string, 'put' | 'delete'>();
@@ -28,24 +25,19 @@ export async function flushPendingOps(config: CalDAVConfig): Promise<void> {
   if (pendingOps.size === 0 || isFlushingPending) return;
   isFlushingPending = true;
   try {
-    let tasksById: Map<string, import('../types.ts').Task> | null = null;
+    let tasksById: Map<string, Task> | null = null;
     for (const [taskId, op] of Array.from(pendingOps.entries())) {
       try {
         if (op === 'delete') {
-          await deleteCalDAVEvent(config, eventUidForTaskId(taskId));
+          await deleteLocalTask(config, taskId);
         } else {
           if (!tasksById) {
             const tasks = await PluginAPI.getTasks();
             tasksById = new Map(tasks.map((t) => [t.id, t]));
           }
           const task = tasksById.get(taskId);
-          if (task && shouldSyncTask(task)) {
-            const tz = await getEventTimezone(config);
-            await putCalDAVEvent(
-              config,
-              eventUidForTask(task),
-              createEventFromTask(task, config, tz),
-            );
+          if (task) {
+            await pushLocalChange(config, task);
           }
         }
         pendingOps.delete(taskId);

@@ -1,11 +1,9 @@
 import type { CalDAVConfig, Task } from './types.ts';
 import { getConfig, isConfigComplete, SYNC_RELEVANT_FIELDS } from './config.ts';
-import { shouldDeleteTask, shouldSyncTask, eventUidForTask, eventUidForTaskId } from './rules.ts';
-import { createEventFromTask } from './ical/build.ts';
-import { deleteCalDAVEvent, putCalDAVEvent } from './caldav/client.ts';
+import { shouldDeleteTask, shouldSyncTask } from './rules.ts';
 import { flushPendingOps, pendingOps, queuePerTask } from './sync/queue.ts';
 import { consumeImporting } from './sync/import.ts';
-import { getEventTimezone } from './caldav/timezone.ts';
+import { deleteLocalTask, pushLocalChange } from './sync/reconcile.ts';
 import { cleanupOrphanedEvents } from './manual-sync.ts';
 
 interface TaskRef {
@@ -118,16 +116,11 @@ export async function onTaskUpsert(payload: unknown, allowDelete = true): Promis
 
   if (shouldSyncTask(resolvedTask)) {
     try {
-      const tz = await getEventTimezone(config);
-      await queuePerTask(resolvedTask.id, () =>
-        putCalDAVEvent(
-          config,
-          eventUidForTask(resolvedTask),
-          createEventFromTask(resolvedTask, config, tz),
-        ),
+      const didWrite = await queuePerTask(resolvedTask.id, () =>
+        pushLocalChange(config, resolvedTask),
       );
       pendingOps.delete(resolvedTask.id);
-      console.log('[CalDAV Sync] Synchronized:', resolvedTask.title);
+      if (didWrite) console.log('[CalDAV Sync] Synchronized:', resolvedTask.title);
       await flushPendingOps(config);
     } catch (error) {
       console.error('[CalDAV Sync] Error synchronizing, queued for retry:', error);
@@ -152,9 +145,7 @@ export async function deleteEventForTaskId(
   taskId: string,
 ): Promise<void> {
   try {
-    await queuePerTask(taskId, () =>
-      deleteCalDAVEvent(config, eventUidForTaskId(taskId)),
-    );
+    await queuePerTask(taskId, () => deleteLocalTask(config, taskId));
     pendingOps.delete(taskId);
     console.log('[CalDAV Sync] Event removed for task:', taskId);
   } catch (error) {

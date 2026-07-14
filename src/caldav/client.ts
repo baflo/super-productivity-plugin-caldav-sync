@@ -15,34 +15,68 @@ export function eventUrl(config: CalDAVConfig, eventUid: string): string {
   return `${config.calendarUrl}${encodeURIComponent(eventUid)}.ics`;
 }
 
+/** Thrown on 412: the compare-and-swap precondition (If-Match /
+ * If-None-Match) failed — someone else wrote the resource concurrently. */
+export class PreconditionFailedError extends Error {
+  constructor(operation: string) {
+    super(`CalDAV ${operation} precondition failed (412) — concurrent change`);
+    this.name = 'PreconditionFailedError';
+  }
+}
+
+export interface PutOptions {
+  /** CAS update: only write if the server still has this ETag */
+  ifMatch?: string;
+  /** CAS create: only write if the resource does not exist yet */
+  ifNoneMatch?: boolean;
+}
+
+export interface PutResult {
+  /** Absent when the server modified the object on storage (sabre behavior)
+   * — caller must GET to learn the current ETag. */
+  etag?: string;
+}
+
 export async function putCalDAVEvent(
   config: CalDAVConfig,
   eventUid: string,
   eventData: string,
-): Promise<void> {
+  opts: PutOptions = {},
+): Promise<PutResult> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'text/calendar; charset=utf-8',
+    Authorization: authHeader(config),
+  };
+  if (opts.ifMatch) headers['If-Match'] = opts.ifMatch;
+  else if (opts.ifNoneMatch) headers['If-None-Match'] = '*';
+
   const response = await fetch(eventUrl(config, eventUid), {
     method: 'PUT',
-    headers: {
-      'Content-Type': 'text/calendar; charset=utf-8',
-      Authorization: authHeader(config),
-    },
+    headers,
     body: eventData,
   });
 
+  if (response.status === 412) throw new PreconditionFailedError('PUT');
   if (!response.ok) {
     throw new Error(`CalDAV PUT failed: ${response.status} ${response.statusText}`);
   }
+  return { etag: response.headers?.get('ETag') ?? undefined };
 }
 
 export async function deleteCalDAVEvent(
   config: CalDAVConfig,
   eventUid: string,
+  opts: { ifMatch?: string } = {},
 ): Promise<void> {
+  const headers: Record<string, string> = { Authorization: authHeader(config) };
+  if (opts.ifMatch) headers['If-Match'] = opts.ifMatch;
+
   const response = await fetch(eventUrl(config, eventUid), {
     method: 'DELETE',
-    headers: { Authorization: authHeader(config) },
+    headers,
   });
 
+  if (response.status === 412) throw new PreconditionFailedError('DELETE');
   if (!response.ok && response.status !== 404) {
     throw new Error(`CalDAV DELETE failed: ${response.status} ${response.statusText}`);
   }

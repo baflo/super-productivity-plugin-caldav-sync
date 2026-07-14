@@ -4,6 +4,7 @@
  */
 import type { CalDAVConfig, SnackCfg, SPPluginAPI, Task } from '../src/types.ts';
 import { resetTimezoneCache, setTimezoneOverride } from '../src/caldav/timezone.ts';
+import { resetPullState } from '../src/sync/state.ts';
 
 export const snacks: SnackCfg[] = [];
 export const tasksStore: Task[] = [];
@@ -42,12 +43,14 @@ export function okResponse(
   body = '',
   headers: Record<string, string> = {},
 ): StubResponse {
+  // Default ETag so CAS writes don't need a GET-after-PUT in every test
+  const merged: Record<string, string> = { ETag: '"stub-etag"', ...headers };
   return {
     ok: true,
     status,
     statusText: 'OK',
     text: async () => body,
-    headers: { get: (name) => headers[name] ?? headers[name.toLowerCase()] ?? null },
+    headers: { get: (name) => merged[name] ?? merged[name.toLowerCase()] ?? null },
   };
 }
 
@@ -161,5 +164,6 @@ export function resetAll(): void {
   fetchCalls.length = 0;
   updateTaskCalls.length = 0;
   fakeStorage.clear();
+  resetPullState();
   fetchImpl = async () => okResponse();
 }

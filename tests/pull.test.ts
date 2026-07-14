@@ -39,10 +39,19 @@ const ETAG_LISTING = (items: Array<[string, string]>): string =>
     .join('') +
   '</d:multistatus>';
 
+// LAST-MODIFIED is included by default: real calendar servers always set it,
+// and it makes the calendar win the bootstrap LWW against tasks without
+// `updated` in these fixtures.
 const EVENT_ICS = (uid: string, lines: string[]): string =>
-  ['BEGIN:VCALENDAR', 'BEGIN:VEVENT', `UID:${uid}`, ...lines, 'END:VEVENT', 'END:VCALENDAR'].join(
-    '\r\n',
-  );
+  [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    `UID:${uid}`,
+    'LAST-MODIFIED:20260713T120000Z',
+    ...lines,
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
 
 beforeEach(() => {
   resetAll();
@@ -121,12 +130,12 @@ test('echo of our own write is recognized: no updateTask, ETag recorded', async 
   assert.equal(stats.unchanged, 1);
   assert.equal(updateTaskCalls.length, 0);
   const config = await getConfig();
-  assert.equal(loadPullState(config.calendarUrl).etags['t1'], '"e7"');
+  assert.equal(loadPullState(config.calendarUrl).records['t1'].etag, '"e7"');
 });
 
 test('unchanged ctag short-circuits without further requests', async () => {
   const config = await getConfig();
-  savePullState({ calendarUrl: config.calendarUrl, syncToken: null, ctag: 'c1', etags: {} });
+  savePullState({ calendarUrl: config.calendarUrl, syncToken: null, ctag: 'c1', records: {} });
   stubServer({ ctag: 'c1' });
 
   const stats = await pollTick(config);
@@ -135,9 +144,11 @@ test('unchanged ctag short-circuits without further requests', async () => {
   assert.equal(fetchCalls.length, 1, 'only the Depth:0 PROPFIND');
 });
 
-test('pending local op blocks import (local state is ahead of calendar)', async () => {
-  tasksStore.push(task({ id: 't1', title: 'Lokal neuer', dueDay: '2026-07-14' }));
-  pendingOps.set('t1', 'put');
+test('newer local task state wins the LWW merge and is pushed, not overwritten', async () => {
+  // task.updated is NEWER than the event's LAST-MODIFIED → local wins
+  tasksStore.push(
+    task({ id: 't1', title: 'Lokal neuer', dueDay: '2026-07-14', updated: Date.UTC(2026, 6, 14) }),
+  );
   stubServer({
     ctag: 'c1',
     listing: [['/cal/sp-task-t1.ics', '"e1"']],
@@ -148,8 +159,12 @@ test('pending local op blocks import (local state is ahead of calendar)', async 
 
   const stats = await pollTick(await getConfig());
 
-  assert.equal(stats.skipped, 1);
-  assert.equal(updateTaskCalls.length, 0);
+  assert.equal(updateTaskCalls.length, 0, 'local task untouched');
+  assert.equal(stats.pushed, 1);
+  const puts = fetchCalls.filter(([, o]) => o.method === 'PUT');
+  assert.equal(puts.length, 1);
+  assert.match(String(puts[0][1].body), /SUMMARY:Lokal neuer/);
+  assert.equal((puts[0][1].headers as Record<string, string>)['If-Match'], '"e-served"');
 });
 
 test('done/unscheduled tasks and unknown events are never imported', async () => {
@@ -170,17 +185,24 @@ test('done/unscheduled tasks and unknown events are never imported', async () =>
   assert.equal(fetchCalls.filter(([, o]) => o.method === 'GET').length, 0, 'no GETs for skipped');
 });
 
-test('remotely deleted event: no eager recreation, ETag forgotten', async () => {
+test('remotely deleted event: no eager recreation, record marked gone', async () => {
   const config = await getConfig();
   tasksStore.push(task({ id: 't1', title: 'X', dueDay: '2026-07-14' }));
-  savePullState({ calendarUrl: config.calendarUrl, syncToken: null, ctag: 'c0', etags: { t1: '"e1"' } });
+  savePullState({
+    calendarUrl: config.calendarUrl,
+    syncToken: null,
+    ctag: 'c0',
+    records: { t1: { etag: '"e1"', snap: null, gone: false } },
+  });
   stubServer({ ctag: 'c1', listing: [] });
 
   const stats = await pollTick(config);
 
   assert.equal(stats.removedRemotely, 1);
   assert.equal(fetchCalls.filter(([, o]) => o.method === 'PUT').length, 0, 'no recreation PUT');
-  assert.equal(loadPullState(config.calendarUrl).etags['t1'], undefined);
+  const record = loadPullState(config.calendarUrl).records['t1'];
+  assert.equal(record.gone, true);
+  assert.equal(record.etag, null);
 });
 
 test('empty DESCRIPTION does not wipe existing task notes', async () => {

@@ -69,6 +69,12 @@ is open (cheap CTag/sync-token check every ~45 s, immediately on app focus) and
 imports calendar-side edits into the matching task:
 
 - **Imported**: title, date/time (timezone-aware), duration (→ time estimate), notes
+- **Concurrent edits merge**: if the task changed in SP *and* the event changed in the
+  calendar, disjoint fields (e.g. title here, time there) are merged; a genuine
+  same-field conflict resolves deterministically (newer edit wins, SP wins ties)
+  with a warning notification
+- **Safe writes**: every write uses HTTP `If-Match`, so the plugin can never
+  blindly overwrite a concurrent calendar change — conflicts are detected and merged
 - **Not imported**: reminders/alarms (write-only, from plugin config), completion, deletion —
   an event deleted in the calendar is *not* re-created automatically, but reappears
   when the task changes or on the next manual sync

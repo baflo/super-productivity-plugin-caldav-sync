@@ -1,11 +1,11 @@
 import type { CalDAVConfig, Task } from './types.ts';
 import { getConfig, isConfigComplete } from './config.ts';
-import { eventUidForTask, eventUidForTaskId, shouldDeleteTask, shouldSyncTask } from './rules.ts';
-import { createEventFromTask } from './ical/build.ts';
-import { deleteCalDAVEvent, listCalDAVTaskIds, putCalDAVEvent } from './caldav/client.ts';
-import { pendingOps } from './sync/queue.ts';
+import { eventUidForTaskId, shouldDeleteTask, shouldSyncTask } from './rules.ts';
+import { deleteCalDAVEvent, listCalDAVTaskIds } from './caldav/client.ts';
+import { pendingOps, queuePerTask } from './sync/queue.ts';
 import { pollTick } from './sync/poll.ts';
-import { getEventTimezone } from './caldav/timezone.ts';
+import { pushLocalChange } from './sync/reconcile.ts';
+import { dropRecord, loadPullState, savePullState } from './sync/state.ts';
 
 // Runs worker(item) for all items with limited concurrency; workers must
 // handle their own errors
@@ -51,16 +51,19 @@ export async function cleanupOrphanedEvents(
     return !task || shouldDeleteTask(task, config);
   });
 
+  const state = loadPullState(config.calendarUrl);
   let removed = 0;
   await runPool(orphanIds, 3, async (taskId) => {
     try {
       await deleteCalDAVEvent(config, eventUidForTaskId(taskId));
       pendingOps.delete(taskId);
+      dropRecord(state, taskId);
       removed++;
     } catch (error) {
       console.warn('[CalDAV Sync] Could not remove orphaned event:', taskId, error);
     }
   });
+  if (removed > 0) savePullState(state);
   return removed;
 }
 
@@ -108,19 +111,16 @@ export async function manualSync(): Promise<void> {
     );
 
     let synced = 0;
+    let upToDateCount = 0;
     let errors = 0;
     let firstError: string | null = null;
 
-    const tz = await getEventTimezone(config);
     await runPool(tasksToSync, 3, async (task) => {
       try {
-        await putCalDAVEvent(
-          config,
-          eventUidForTask(task),
-          createEventFromTask(task, config, tz),
-        );
+        const didWrite = await queuePerTask(task.id, () => pushLocalChange(config, task));
         pendingOps.delete(task.id);
-        synced++;
+        if (didWrite) synced++;
+        else upToDateCount++;
       } catch (error) {
         console.error('[CalDAV Sync] Error synchronizing task:', task.id, error);
         pendingOps.set(task.id, 'put');
@@ -137,6 +137,7 @@ export async function manualSync(): Promise<void> {
     }
 
     const msgParts = [`${synced} tasks synchronized`];
+    if (upToDateCount > 0) msgParts.push(`${upToDateCount} already up to date`);
     if (imported > 0) msgParts.push(`${imported} calendar edits imported`);
     if (orphansRemoved > 0) msgParts.push(`${orphansRemoved} orphaned events removed`);
     if (errors > 0) msgParts.push(`${errors} errors (first: ${firstError})`);

@@ -9,14 +9,20 @@
   `updateTask` with echo suppression. Interim conflict rule: import is skipped
   while a local op is queued (`pendingOps`); otherwise remote wins on
   difference. Per-task ETags are already recorded device-locally.
-- **Phase 2 — three-way state + CAS**: `{etag, snap, gone}` records, If-Match
-  on all writes with 412 → reconcile, GET-after-PUT fallback, full `reconcile`
-  state machine with field merge + deterministic LWW.
-- **Phase 3 — multi-writer hardening**: semantic idempotence before every
-  write, no-eager-recreate via `gone`, read-modify-write with property
-  preservation and the `X-SP-CALDAV` VALARM marker.
-- **Phase 4 — polish + migration**: bootstrap for existing calendars, conflict
-  snacks, manual sync as full reconcile, upstream proposal for a plugin
+- **Phase 2 — three-way state + CAS** ✅ (v2.5.0): `{etag, snap, gone}`
+  records (Phase-1 state migrates automatically), If-Match/If-None-Match on
+  all writes with 412 → GET → full reconcile, GET-after-PUT fallback, the
+  four-case `reconcile` state machine with per-field merge (schedule as one
+  compound field), deterministic LWW via `task.updated` vs `LAST-MODIFIED`
+  (SP wins ties), conflict snacks only for genuine same-field conflicts
+  (bootstrap LWW without a merge base stays silent), no-eager-recreate via
+  `gone`, semantic idempotence on every push (unchanged tasks produce zero
+  requests). Already delivered from this phase's plan ahead of Phase 3:
+  echo adoption of identical writes from other clients.
+- **Phase 3 — multi-writer hardening**: read-modify-write with property
+  preservation and the `X-SP-CALDAV` VALARM marker; poll jitter exists.
+- **Phase 4 — polish + migration**: manual sync as full reconcile (today:
+  pull tick + CAS push + orphan cleanup), upstream proposal for a plugin
   scheduling API.
 
 ## Goals

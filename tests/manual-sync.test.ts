@@ -96,6 +96,7 @@ test('manual sync with two-way: pulls calendar edits BEFORE pushing and does not
     'BEGIN:VCALENDAR',
     'BEGIN:VEVENT',
     'UID:sp-task-t1',
+    'LAST-MODIFIED:20260713T120000Z',
     'SUMMARY:Kalender-Titel',
     'DTSTART;VALUE=DATE:20260714',
     'END:VEVENT',

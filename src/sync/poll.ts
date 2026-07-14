@@ -12,7 +12,7 @@
  */
 import type { CalDAVConfig, Task } from '../types.ts';
 import { getConfig, isConfigComplete } from '../config.ts';
-import { shouldSyncTask } from '../rules.ts';
+import { shouldDeleteTask, shouldSyncTask } from '../rules.ts';
 import {
   getCalDAVEvent,
   getCalendarSyncState,
@@ -20,20 +20,13 @@ import {
   syncCollectionDelta,
 } from '../caldav/client.ts';
 import { taskIdFromHref } from '../caldav/xml.ts';
-import { parseVEvent } from '../ical/parse.ts';
-import { semanticEqual, semanticOfEvent, semanticOfTask } from '../ical/semantic.ts';
-import { applySemanticToTask } from './import.ts';
-import { loadPullState, savePullState } from './state.ts';
-import { flushPendingOps, pendingOps } from './queue.ts';
+import { getRecord, loadPullState, savePullState, setRecord } from './state.ts';
+import { flushPendingOps, pendingOps, queuePerTask } from './queue.ts';
+import { reconcileWithRemote, type ReconcileStats } from './reconcile.ts';
 
-export interface PullStats {
+export interface PullStats extends ReconcileStats {
   upToDate: boolean;
-  imported: number;
-  unchanged: number;
   skipped: number;
-  removedRemotely: number;
-  /** Tasks that just received calendar values — do not push them right back */
-  importedTaskIds: string[];
 }
 
 const BASE_INTERVAL_MS = 45000;
@@ -105,9 +98,12 @@ export function pollTick(config: CalDAVConfig): Promise<PullStats> {
   const stats: PullStats = {
     upToDate: false,
     imported: 0,
+    pushed: 0,
     unchanged: 0,
     skipped: 0,
     removedRemotely: 0,
+    deletedEvents: 0,
+    conflicts: 0,
     importedTaskIds: [],
   };
   inFlightTick = pollTickInner(config, stats).finally(() => {
@@ -152,11 +148,11 @@ async function pollTickInner(config: CalDAVConfig, stats: PullStats): Promise<Pu
       const taskId = taskIdFromHref(entry.href);
       if (!taskId) continue;
       seen.add(taskId);
-      if (!entry.etag || state.etags[taskId] !== entry.etag) {
+      if (!entry.etag || getRecord(state, taskId).etag !== entry.etag) {
         changed.push({ taskId, etag: entry.etag });
       }
     }
-    deletedTaskIds = Object.keys(state.etags).filter((taskId) => !seen.has(taskId));
+    deletedTaskIds = Object.keys(state.records).filter((taskId) => !seen.has(taskId));
     newToken = remote.syncToken;
   }
 
@@ -165,58 +161,38 @@ async function pollTickInner(config: CalDAVConfig, stats: PullStats): Promise<Pu
 
   for (const { taskId, etag } of changed) {
     try {
-      const task = tasksById.get(taskId);
-      // No matching task -> orphan (manual sync territory). Done/unscheduled
-      // tasks: existence & schedule authority stays with SP, never import.
-      if (!task || !shouldSyncTask(task)) {
+      const task = tasksById.get(taskId) ?? null;
+      // Unknown taskId: could be an orphan — but also a task another SP
+      // client just created that SP sync has not delivered here yet. Never
+      // touch those automatically (manual sync's orphan cleanup handles
+      // true leftovers).
+      if (!task) {
         stats.skipped++;
-        if (etag) state.etags[taskId] = etag;
         continue;
       }
-      // A queued local op means the task is ahead of the calendar — do not
-      // overwrite the newer local state with a stale event (Phase 1 guard).
-      if (pendingOps.has(taskId)) {
+      // Done task whose event is kept: adopt ETag without a GET
+      if (!shouldSyncTask(task) && !shouldDeleteTask(task, config)) {
         stats.skipped++;
+        if (etag) {
+          setRecord(state, taskId, { ...getRecord(state, taskId), etag, gone: false });
+        }
         continue;
       }
 
       const fetched = await getCalDAVEvent(config, `sp-task-${taskId}`);
-      if (!fetched) {
-        stats.removedRemotely++;
-        delete state.etags[taskId];
-        continue;
-      }
-      const parsed = parseVEvent(fetched.ics);
-      const remoteSem = parsed ? semanticOfEvent(parsed) : null;
-      if (!remoteSem) {
-        stats.skipped++;
-        if (fetched.etag) state.etags[taskId] = fetched.etag;
-        continue;
-      }
-
-      if (semanticEqual(remoteSem, semanticOfTask(task))) {
-        // Echo of our own write or no-op — just record the ETag
-        stats.unchanged++;
-      } else {
-        const didChange = await applySemanticToTask(task, remoteSem);
-        if (didChange) {
-          stats.imported++;
-          stats.importedTaskIds.push(taskId);
-        } else {
-          stats.unchanged++;
-        }
-      }
-      const effectiveEtag = fetched.etag ?? etag;
-      if (effectiveEtag) state.etags[taskId] = effectiveEtag;
+      await queuePerTask(taskId, () =>
+        reconcileWithRemote(config, task, taskId, fetched, stats),
+      );
     } catch (error) {
       console.warn('[CalDAV Sync] Pull failed for task, will retry next tick:', taskId, error);
     }
   }
 
   for (const taskId of deletedTaskIds) {
-    // No eager recreation (design principle 5) — just forget the ETag.
-    if (state.etags[taskId]) {
-      delete state.etags[taskId];
+    // No eager recreation (design principle 5) — remember the event as gone.
+    const record = getRecord(state, taskId);
+    if (record.etag !== null || !record.gone) {
+      setRecord(state, taskId, { ...record, etag: null, gone: true });
       stats.removedRemotely++;
     }
   }
@@ -225,7 +201,7 @@ async function pollTickInner(config: CalDAVConfig, stats: PullStats): Promise<Pu
   state.ctag = remote.ctag ?? null;
   savePullState(state);
 
-  if (stats.imported > 0) {
+  if (stats.imported > 0 || stats.pushed > 0 || stats.conflicts > 0) {
     console.log('[CalDAV Sync] Pull tick:', stats);
   }
   return stats;
