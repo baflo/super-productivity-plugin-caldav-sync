@@ -1,7 +1,7 @@
 {
   "id": "caldav-sync",
   "name": "CalDAV Schedule Sync",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "Synchronizes scheduled tasks (dueWithTime/dueDay) to a CalDAV calendar, with optional reminder alarms and two-way sync",
   "manifestVersion": 1,
   "minSupVersion": "16.8.3",

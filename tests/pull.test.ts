@@ -352,7 +352,9 @@ test('echo suppression consumes exactly one hook invocation', async () => {
   await onTaskUpsert({ taskId: 't1', task: tasksStore[0], changes: { title: 'Neu' } });
   assert.equal(fetchCalls.length, 0, 'echo suppressed');
 
-  // …but the next genuine user edit goes through.
-  await onTaskUpsert({ taskId: 't1', task: tasksStore[0], changes: { title: 'User edit' } });
+  // …but the next genuine user edit goes through. Like SP, the store is
+  // updated BEFORE the hook fires (push re-reads the task from the store).
+  tasksStore[0].title = 'User edit';
+  await onTaskUpsert({ taskId: 't1', task: { ...tasksStore[0] }, changes: { title: 'User edit' } });
   assert.equal(fetchCalls.filter(([, o]) => o.method === 'PUT').length, 1);
 });

@@ -53,6 +53,22 @@ function taskWithSemantic(task: Task, sem: Semantic): Task {
   return { ...task, ...(taskUpdatesFromSemantic(task, sem) ?? {}) };
 }
 
+/**
+ * Re-read the task at execution time. Hook payloads and pollTick's task list
+ * are snapshots — a concurrently queued import (per-task queue!) may have
+ * updated the task after the snapshot was taken. Deciding on a stale
+ * snapshot would push outdated values right back to the calendar (observed
+ * as "title correct everywhere, times diverge").
+ */
+async function freshTask(taskId: string, fallback: Task | null): Promise<Task | null> {
+  try {
+    const tasks = await PluginAPI.getTasks();
+    return tasks.find((t) => t.id === taskId) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 /** CAS write; returns the new record on success, null on 412 */
 async function writeEventCAS(
   config: CalDAVConfig,
@@ -106,7 +122,8 @@ async function deleteEventCAS(
 }
 
 /** Local task changed / needs syncing — optimistic CAS, full reconcile on 412 */
-export async function pushLocalChange(config: CalDAVConfig, task: Task): Promise<boolean> {
+export async function pushLocalChange(config: CalDAVConfig, taskSnapshot: Task): Promise<boolean> {
+  const task = (await freshTask(taskSnapshot.id, taskSnapshot)) as Task;
   const state = loadPullState(config.calendarUrl);
   const record = getRecord(state, task.id);
 
@@ -222,12 +239,13 @@ export function mergeFields(
  */
 export async function reconcileWithRemote(
   config: CalDAVConfig,
-  task: Task | null,
+  taskSnapshot: Task | null,
   taskId: string,
   fetched: FetchedEvent | null,
   stats?: ReconcileStats,
   depth = 0,
 ): Promise<void> {
+  const task = taskSnapshot ? await freshTask(taskId, taskSnapshot) : null;
   const state = loadPullState(config.calendarUrl);
   const record = getRecord(state, taskId);
 

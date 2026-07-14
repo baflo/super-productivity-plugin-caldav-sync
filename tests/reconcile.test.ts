@@ -8,6 +8,7 @@ import {
   fetchCalls,
   snacks,
   updateTaskCalls,
+  tasksStore,
   task,
   configStore,
   type StubResponse,
@@ -217,6 +218,72 @@ test('another client wrote identical content: ETag adopted silently, nothing wri
   assert.equal(fetchCalls.length, 0);
   assert.equal(updateTaskCalls.length, 0);
   assert.equal(loadPullState(config.calendarUrl).records['x'].etag, '"theirs"');
+});
+
+test('stale hook payload: push re-reads the task and keeps a just-imported time', async () => {
+  const config = await getConfig();
+  // Import already happened: task in the store has the NEW time from the
+  // calendar; record snap reflects it.
+  const importedTime = Date.UTC(2026, 6, 23, 14, 0);
+  const current = task({
+    id: 'x',
+    title: 'Neu',
+    dueWithTime: importedTime,
+    timeEstimate: 3600000,
+  });
+  tasksStore.push(current);
+  savePullState({
+    calendarUrl: config.calendarUrl,
+    syncToken: null,
+    ctag: null,
+    records: {
+      x: {
+        etag: '"e2"',
+        snap: { title: 'Alt', notes: '', allDay: false, start: importedTime, durationM: 60 },
+        gone: false,
+      },
+    },
+  });
+
+  // The hook payload still carries the PRE-import snapshot (old time):
+  const stalePayloadTask = task({
+    id: 'x',
+    title: 'Neu',
+    dueWithTime: Date.UTC(2026, 6, 22, 9, 0),
+    timeEstimate: 3600000,
+  });
+
+  await pushLocalChange(config, stalePayloadTask);
+
+  const put = fetchCalls.filter(([, o]) => o.method === 'PUT')[0];
+  assert.ok(put, 'title change still pushed');
+  assert.match(String(put[1].body), /SUMMARY:Neu/);
+  assert.match(String(put[1].body), /DTSTART:20260723T140000Z/, 'imported time kept');
+  assert.doesNotMatch(String(put[1].body), /20260722/, 'stale time NOT written back');
+});
+
+test('stale poll snapshot: reconcile re-reads the task and does not revert a newer local edit', async () => {
+  const config = await getConfig();
+  const current = task({ id: 'x', title: 'Neu', dueDay: '2026-07-20' });
+  tasksStore.push(current);
+  const snap = semanticOfTask(current); // store state == snap == remote
+  savePullState({
+    calendarUrl: config.calendarUrl,
+    syncToken: null,
+    ctag: null,
+    records: { x: { etag: '"e1"', snap, gone: false } },
+  });
+  const fetched = {
+    ics: ICS(['LAST-MODIFIED:20260713T120000Z', 'SUMMARY:Neu', 'DTSTART;VALUE=DATE:20260720']),
+    etag: '"e1"',
+  };
+
+  // Poll captured the task list BEFORE the user's title edit:
+  const staleCopy = task({ id: 'x', title: 'Alt', dueDay: '2026-07-20' });
+  await reconcileWithRemote(config, staleCopy, 'x', fetched);
+
+  assert.equal(fetchCalls.filter(([, o]) => o.method === 'PUT').length, 0, 'no revert push');
+  assert.equal(updateTaskCalls.length, 0);
 });
 
 test('done task with deleteCompletedTasks: both-changed still resolves to delete', async () => {
