@@ -3,6 +3,7 @@
  * globalThis so the src modules resolve them at call time.
  */
 import type { CalDAVConfig, SnackCfg, SPPluginAPI, Task } from '../src/types.ts';
+import { resetTimezoneCache, setTimezoneOverride } from '../src/caldav/timezone.ts';
 
 export const snacks: SnackCfg[] = [];
 export const tasksStore: Task[] = [];
@@ -146,6 +147,10 @@ export function installStubs(): void {
   };
   (globalThis as Record<string, unknown>).DOMParser = FakeDOMParser;
   (globalThis as Record<string, unknown>).localStorage = fakeStorage;
+  // Deterministic UTC events in tests regardless of host/server timezone;
+  // timezone.test.ts lifts this override explicitly.
+  setTimezoneOverride(null);
+  resetTimezoneCache();
 }
 
 export function resetAll(): void {

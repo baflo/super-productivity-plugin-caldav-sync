@@ -68,6 +68,40 @@ test('folding: no physical line exceeds 75 octets, content survives unfolding', 
   assert.ok(unfolded.includes(escapeICalText(longTitle)));
 });
 
+test('timezone-aware events: TZID datetimes, embedded VTIMEZONE, DST-correct wall time', () => {
+  const tz = {
+    tzid: 'Europe/Berlin',
+    vtimezoneLines: ['BEGIN:VTIMEZONE', 'TZID:Europe/Berlin', 'END:VTIMEZONE'],
+  };
+  const summer = createEventFromTask(
+    task({ id: 'z', title: 'S', dueWithTime: Date.UTC(2026, 6, 14, 10, 0), timeEstimate: 3600000 }),
+    cfg(),
+    tz,
+  );
+  assert.match(summer, /DTSTART;TZID=Europe\/Berlin:20260714T120000/, 'CEST +2');
+  assert.match(summer, /DTEND;TZID=Europe\/Berlin:20260714T130000/);
+  assert.match(summer, /BEGIN:VTIMEZONE/);
+
+  const winter = createEventFromTask(
+    task({ id: 'z', title: 'W', dueWithTime: Date.UTC(2026, 0, 14, 10, 0) }),
+    cfg(),
+    tz,
+  );
+  assert.match(winter, /DTSTART;TZID=Europe\/Berlin:20260114T110000/, 'CET +1');
+
+  // all-day events never carry TZID/VTIMEZONE
+  const allDay = createEventFromTask(task({ id: 'z', title: 'A', dueDay: '2026-07-14' }), cfg(), tz);
+  assert.doesNotMatch(allDay, /VTIMEZONE|TZID/);
+
+  // no tz -> UTC as before
+  const utc = createEventFromTask(
+    task({ id: 'z', title: 'U', dueWithTime: Date.UTC(2026, 6, 14, 10, 0) }),
+    cfg(),
+    null,
+  );
+  assert.match(utc, /DTSTART:20260714T100000Z/);
+});
+
 test('escaping normalizes CR/CRLF and escapes special characters', () => {
   assert.equal(escapeICalText('a\r\nb\rc\nd'), 'a\\nb\\nc\\nd');
   assert.equal(escapeICalText('a;b,c\\d'), 'a\\;b\\,c\\\\d');

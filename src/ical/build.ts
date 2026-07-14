@@ -1,16 +1,25 @@
 import type { CalDAVConfig, Task } from '../types.ts';
 import { eventUidForTask } from '../rules.ts';
+import type { CalendarTz } from '../caldav/timezone.ts';
 
-export function createEventFromTask(task: Task, config: CalDAVConfig): string {
+export function createEventFromTask(
+  task: Task,
+  config: CalDAVConfig,
+  tz?: CalendarTz | null,
+): string {
   let dtstart: string;
   let dtend: string;
 
   if (task.dueWithTime) {
-    const startDate = new Date(task.dueWithTime);
-    const duration = task.timeEstimate || 3600000;
-    const endDate = new Date(startDate.getTime() + duration);
-    dtstart = `DTSTART:${formatICalDateTimeUTC(startDate)}`;
-    dtend = `DTEND:${formatICalDateTimeUTC(endDate)}`;
+    const startMs = task.dueWithTime;
+    const endMs = startMs + (task.timeEstimate || 3600000);
+    if (tz) {
+      dtstart = `DTSTART;TZID=${tz.tzid}:${formatICalDateTimeZoned(startMs, tz.tzid)}`;
+      dtend = `DTEND;TZID=${tz.tzid}:${formatICalDateTimeZoned(endMs, tz.tzid)}`;
+    } else {
+      dtstart = `DTSTART:${formatICalDateTimeUTC(new Date(startMs))}`;
+      dtend = `DTEND:${formatICalDateTimeUTC(new Date(endMs))}`;
+    }
   } else {
     // All-day event: DTEND is exclusive per RFC 5545, so it is the next day
     const startDate = new Date(`${task.dueDay}T00:00:00Z`);
@@ -35,10 +44,15 @@ export function createEventFromTask(task: Task, config: CalDAVConfig): string {
     ];
   }
 
+  // Embed the server-provided VTIMEZONE when we reference its TZID (device
+  // TZ fallback has none; IANA TZIDs are resolved by servers/clients anyway)
+  const vtimezoneLines = tz && task.dueWithTime ? tz.vtimezoneLines : [];
+
   return [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
     'PRODID:-//Super Productivity//CalDAV Sync Plugin//EN',
+    ...vtimezoneLines,
     'BEGIN:VEVENT',
     `UID:${eventUidForTask(task)}`,
     `DTSTAMP:${formatICalDateTimeUTC(new Date())}`,
@@ -68,6 +82,26 @@ export function formatICalDateTimeUTC(date: Date): string {
 export function formatICalDateUTC(date: Date): string {
   const pad = (n: number): string => String(n).padStart(2, '0');
   return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}`;
+}
+
+/** Wall-clock time of an instant in an IANA zone, as iCal local datetime */
+export function formatICalDateTimeZoned(epochMs: number, tzid: string): string {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: tzid,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+  const parts: Record<string, string> = {};
+  for (const p of dtf.formatToParts(new Date(epochMs))) {
+    if (p.type !== 'literal') parts[p.type] = p.value;
+  }
+  const hour = String(Number(parts.hour) % 24).padStart(2, '0');
+  return `${parts.year}${parts.month}${parts.day}T${hour}${parts.minute}${parts.second}`;
 }
 
 export function escapeICalText(text: string | undefined): string {

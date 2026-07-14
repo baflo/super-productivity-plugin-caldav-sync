@@ -13,7 +13,7 @@ import {
 } from './helpers.ts';
 
 installStubs();
-const { pollTick } = await import('../src/sync/poll.ts');
+const { pollTick, runPollCycle } = await import('../src/sync/poll.ts');
 const { loadPullState, savePullState } = await import('../src/sync/state.ts');
 const { consumeImporting } = await import('../src/sync/import.ts');
 const { onTaskUpsert } = await import('../src/handlers.ts');
@@ -220,6 +220,23 @@ test('timed -> all-day edit clears dueWithTime and sets dueDay', async () => {
   const [, updates] = updateTaskCalls[0];
   assert.equal(updates.dueDay, '2026-07-16');
   assert.equal(updates.dueWithTime, null);
+});
+
+test('poll cycle flushes queued offline ops even with two-way sync disabled', async () => {
+  configStore.twoWaySync = false;
+  tasksStore.push(task({ id: 'off1', title: 'offline edit', dueDay: '2026-07-15' }));
+  pendingOps.set('off1', 'put');
+
+  await runPollCycle();
+
+  const puts = fetchCalls.filter(([, o]) => o.method === 'PUT').map(([u]) => u);
+  assert.ok(puts.some((u) => u.endsWith('sp-task-off1.ics')), 'queued op pushed');
+  assert.equal(pendingOps.size, 0);
+  assert.equal(
+    fetchCalls.filter(([, o]) => o.method === 'PROPFIND').length,
+    0,
+    'no pull without twoWaySync',
+  );
 });
 
 test('echo suppression consumes exactly one hook invocation', async () => {

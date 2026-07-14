@@ -14,14 +14,26 @@ import {
 } from './helpers.ts';
 
 installStubs();
-const { onTaskUpsert, onTaskCreated, onTaskDelete, onTaskComplete, extractTaskRef, extractDeletedTaskIds } =
-  await import('../src/handlers.ts');
+const {
+  onTaskUpsert,
+  onTaskCreated,
+  onTaskDelete,
+  onTaskComplete,
+  extractTaskRef,
+  extractDeletedTaskIds,
+  setOrphanSweepDelayForTests,
+  cancelOrphanSweepForTests,
+} = await import('../src/handlers.ts');
 const { pendingOps } = await import('../src/sync/queue.ts');
 const { getConfig } = await import('../src/config.ts');
 
 beforeEach(() => {
   resetAll();
   pendingOps.clear();
+  // Keep delete-triggered sweeps from leaking into unrelated tests; the
+  // dedicated sweep test lowers the delay itself.
+  cancelOrphanSweepForTests();
+  setOrphanSweepDelayForTests(600000);
 });
 
 test('extractTaskRef handles string, {taskId}, {taskId, task, changes} and bare task payloads', () => {
@@ -33,11 +45,53 @@ test('extractTaskRef handles string, {taskId}, {taskId, task, changes} and bare 
   assert.equal(extractTaskRef(t).taskId, 't1');
 });
 
-test('extractDeletedTaskIds handles taskIds array, taskId and plain string', () => {
+test('extractDeletedTaskIds handles taskIds array, taskId, plain string and subTaskIds', () => {
   assert.deepEqual(extractDeletedTaskIds({ taskIds: ['a', 'b'] }), ['a', 'b']);
   assert.deepEqual(extractDeletedTaskIds({ taskId: 'a' }), ['a']);
   assert.deepEqual(extractDeletedTaskIds('a'), ['a']);
   assert.deepEqual(extractDeletedTaskIds(null), []);
+  assert.deepEqual(
+    extractDeletedTaskIds({
+      taskId: 'p',
+      task: { id: 'p', title: 'parent', subTaskIds: ['s1', 's2'] },
+    }),
+    ['p', 's1', 's2'],
+  );
+});
+
+test('deleting a parent also deletes subtask events from the payload', async () => {
+  await onTaskDelete({
+    taskId: 'p',
+    task: task({ id: 'p', title: 'parent', subTaskIds: ['s1', 's2'] }),
+  });
+  const deleteUrls = fetchCalls.filter(([, o]) => o.method === 'DELETE').map(([u]) => u);
+  for (const id of ['p', 's1', 's2']) {
+    assert.ok(deleteUrls.some((u) => u.endsWith(`sp-task-${id}.ics`)), `event of ${id} deleted`);
+  }
+});
+
+test('post-delete orphan sweep removes subtask events missing from the payload', async () => {
+  setOrphanSweepDelayForTests(5);
+  // Payload knows only the parent id; the subtask event survives on the server
+  setFetchImpl(async (_url, opts = {}) => {
+    if (opts.method === 'PROPFIND') {
+      return okResponse(
+        207,
+        '<d:multistatus xmlns:d="DAV:"><d:response><d:href>/cal/sp-task-orphan-sub.ics</d:href>' +
+          '<d:propstat><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>',
+      );
+    }
+    return okResponse();
+  });
+
+  await onTaskDelete({ taskId: 'p' });
+  await new Promise((resolve) => setTimeout(resolve, 60));
+
+  const deleteUrls = fetchCalls.filter(([, o]) => o.method === 'DELETE').map(([u]) => u);
+  assert.ok(
+    deleteUrls.some((u) => u.endsWith('sp-task-orphan-sub.ics')),
+    'sweep removed the orphaned subtask event',
+  );
 });
 
 test('batch delete sends one DELETE per task id', async () => {

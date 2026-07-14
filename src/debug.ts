@@ -6,6 +6,7 @@ import { pendingOps } from './sync/queue.ts';
 import { cleanupOrphanedEvents, manualSync } from './manual-sync.ts';
 import { pollTick } from './sync/poll.ts';
 import { loadPullState, resetPullState } from './sync/state.ts';
+import { getEventTimezone } from './caldav/timezone.ts';
 
 export function installDebug(): void {
   const globalObj = (typeof window !== 'undefined' ? window : globalThis) as Record<
@@ -30,7 +31,8 @@ export function installDebug(): void {
         return;
       }
       console.log('Synchronizing task:', task);
-      await putCalDAVEvent(config, eventUidForTask(task), createEventFromTask(task, config));
+      const tz = await getEventTimezone(config);
+      await putCalDAVEvent(config, eventUidForTask(task), createEventFromTask(task, config, tz));
     },
 
     deleteEvent: async (taskId: string) => {

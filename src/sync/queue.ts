@@ -2,6 +2,7 @@ import type { CalDAVConfig } from '../types.ts';
 import { createEventFromTask } from '../ical/build.ts';
 import { deleteCalDAVEvent, putCalDAVEvent } from '../caldav/client.ts';
 import { eventUidForTask, eventUidForTaskId, shouldSyncTask } from '../rules.ts';
+import { getEventTimezone } from '../caldav/timezone.ts';
 
 // In-memory retry queue for requests that failed, e.g. while offline
 export const pendingOps = new Map<string, 'put' | 'delete'>();
@@ -39,10 +40,11 @@ export async function flushPendingOps(config: CalDAVConfig): Promise<void> {
           }
           const task = tasksById.get(taskId);
           if (task && shouldSyncTask(task)) {
+            const tz = await getEventTimezone(config);
             await putCalDAVEvent(
               config,
               eventUidForTask(task),
-              createEventFromTask(task, config),
+              createEventFromTask(task, config, tz),
             );
           }
         }

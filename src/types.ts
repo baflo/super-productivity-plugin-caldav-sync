@@ -19,6 +19,7 @@ export interface Task {
   dueDay?: string | null;
   /** Due date with time, epoch ms */
   dueWithTime?: number | null;
+  subTaskIds?: string[];
 }
 
 export interface CalDAVConfig {

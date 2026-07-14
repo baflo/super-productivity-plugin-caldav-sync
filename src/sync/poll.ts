@@ -24,7 +24,7 @@ import { parseVEvent } from '../ical/parse.ts';
 import { semanticEqual, semanticOfEvent, semanticOfTask } from '../ical/semantic.ts';
 import { applySemanticToTask } from './import.ts';
 import { loadPullState, savePullState } from './state.ts';
-import { pendingOps } from './queue.ts';
+import { flushPendingOps, pendingOps } from './queue.ts';
 
 export interface PullStats {
   upToDate: boolean;
@@ -52,15 +52,27 @@ function scheduleNext(delayMs: number): void {
   timer = setTimeout(() => void run(), delayMs);
 }
 
+// One periodic cycle: retry queued (failed/offline) ops first — this runs
+// regardless of twoWaySync so offline pushes catch up automatically — then
+// pull calendar changes when two-way sync is on. Exported for tests.
+export async function runPollCycle(): Promise<void> {
+  const config = await getConfig();
+  if (!config.enabled || !isConfigComplete(config)) return;
+
+  if (pendingOps.size > 0) {
+    await flushPendingOps(config);
+  }
+  if (config.twoWaySync && isVisible()) {
+    await pollTick(config);
+  }
+}
+
 async function run(): Promise<void> {
   try {
-    const config = await getConfig();
-    if (config.enabled && config.twoWaySync && isConfigComplete(config) && isVisible()) {
-      await pollTick(config);
-      backoff = 1;
-    }
+    await runPollCycle();
+    backoff = 1;
   } catch (error) {
-    console.warn('[CalDAV Sync] Poll tick failed:', error);
+    console.warn('[CalDAV Sync] Poll cycle failed:', error);
     backoff = Math.min(backoff * 2, MAX_BACKOFF);
   }
   scheduleNext((BASE_INTERVAL_MS + Math.random() * JITTER_MS) * backoff);
@@ -77,6 +89,8 @@ export function startPolling(): void {
   }
   if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
     window.addEventListener('focus', () => scheduleNext(1000));
+    // Back online: flush queued ops / catch up immediately
+    window.addEventListener('online', () => scheduleNext(1000));
   }
   scheduleNext(5000);
 }

@@ -5,6 +5,8 @@ import { createEventFromTask } from './ical/build.ts';
 import { deleteCalDAVEvent, putCalDAVEvent } from './caldav/client.ts';
 import { flushPendingOps, pendingOps, queuePerTask } from './sync/queue.ts';
 import { consumeImporting } from './sync/import.ts';
+import { getEventTimezone } from './caldav/timezone.ts';
+import { cleanupOrphanedEvents } from './manual-sync.ts';
 
 interface TaskRef {
   task?: Task | null;
@@ -28,14 +30,57 @@ export function extractTaskRef(payload: unknown): TaskRef {
 }
 
 // TASK_DELETE delivers { taskId } for single deletes but { taskIds } for
-// batch deletes (e.g. deleting a task with subtasks)
+// batch deletes. Deleting a parent cascades to its subtasks WITHOUT their
+// ids appearing in the payload — include task.subTaskIds when present, and
+// a deferred orphan sweep (scheduled by onTaskDelete) catches the rest.
 export function extractDeletedTaskIds(payload: unknown): string[] {
   if (typeof payload === 'string') return [payload];
   if (!payload || typeof payload !== 'object') return [];
   const p = payload as Record<string, unknown>;
-  if (Array.isArray(p.taskIds)) return p.taskIds as string[];
-  if (p.taskId) return [p.taskId as string];
-  return [];
+  const ids = new Set<string>();
+  if (Array.isArray(p.taskIds)) for (const id of p.taskIds as string[]) ids.add(id);
+  if (p.taskId) ids.add(p.taskId as string);
+  const task = p.task as Task | undefined;
+  if (task && Array.isArray(task.subTaskIds)) for (const id of task.subTaskIds) ids.add(id);
+  return [...ids];
+}
+
+// Deferred orphan sweep after deletes: subtask events whose ids never appear
+// in any hook payload are cleaned up by diffing the calendar against the
+// remaining tasks (debounced, so batch deletes trigger one sweep).
+let orphanSweepDelayMs = 5000;
+let sweepTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function setOrphanSweepDelayForTests(ms: number): void {
+  orphanSweepDelayMs = ms;
+}
+
+export function cancelOrphanSweepForTests(): void {
+  if (sweepTimer) {
+    clearTimeout(sweepTimer);
+    sweepTimer = null;
+  }
+}
+
+function scheduleOrphanSweep(): void {
+  if (sweepTimer) clearTimeout(sweepTimer);
+  sweepTimer = setTimeout(() => void runOrphanSweep(), orphanSweepDelayMs);
+  // In Node (tests) a pending timer would keep the process alive; browsers
+  // return a number and this is a no-op there.
+  (sweepTimer as unknown as { unref?: () => void }).unref?.();
+}
+
+async function runOrphanSweep(): Promise<void> {
+  try {
+    const config = await getConfig();
+    if (!config.enabled || !isConfigComplete(config)) return;
+    const removed = await cleanupOrphanedEvents(config, await PluginAPI.getTasks());
+    if (removed > 0) {
+      console.log('[CalDAV Sync] Post-delete sweep removed', removed, 'orphaned events');
+    }
+  } catch (error) {
+    console.warn('[CalDAV Sync] Post-delete orphan sweep failed:', error);
+  }
 }
 
 // allowDelete=false for TASK_CREATED: a brand-new task cannot have an event
@@ -73,11 +118,12 @@ export async function onTaskUpsert(payload: unknown, allowDelete = true): Promis
 
   if (shouldSyncTask(resolvedTask)) {
     try {
+      const tz = await getEventTimezone(config);
       await queuePerTask(resolvedTask.id, () =>
         putCalDAVEvent(
           config,
           eventUidForTask(resolvedTask),
-          createEventFromTask(resolvedTask, config),
+          createEventFromTask(resolvedTask, config, tz),
         ),
       );
       pendingOps.delete(resolvedTask.id);
@@ -129,6 +175,7 @@ export async function onTaskDelete(payload: unknown): Promise<void> {
     await deleteEventForTaskId(config, taskId);
   }
   await flushPendingOps(config);
+  scheduleOrphanSweep();
 }
 
 export async function onTaskComplete(payload: unknown): Promise<void> {

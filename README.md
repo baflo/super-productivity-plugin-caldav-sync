@@ -16,8 +16,8 @@ A plugin for Super Productivity that automatically synchronizes scheduled tasks 
 - 📅 **iCalendar Standard**: RFC 5545 compliant (line folding, exclusive all-day DTEND), compatible with all CalDAV servers (Nextcloud, Radicale, etc.)
 - 🔄 **Automatic Updates**: Changes (title, time, description) are propagated to the calendar
 - ⏰ **Optional reminder alarms** (VALARM) on timed events, with configurable lead time
-- 🗑️ **Cleanup**: Deleted (also batch-deleted) or completed tasks are removed from the calendar; manual sync additionally removes orphaned events
-- 📶 **Retry queue**: Requests that fail (e.g. offline) are queued and retried on the next sync
+- 🗑️ **Cleanup**: Deleted (also batch-deleted) or completed tasks are removed from the calendar — including subtask events when a parent is deleted; manual sync additionally removes orphaned events
+- 📶 **Retry queue**: Requests that fail (e.g. offline) are queued and retried automatically (~45 s interval while the app is open, immediately on reconnect) — no manual sync needed
 
 ## 🚀 Installation
 
@@ -102,7 +102,7 @@ A task is **only** synchronized if:
 - **Title**: `task.title`
 - **Description**: `task.notes`
 - **UID / filename**: `sp-task-{taskId}` (for tracking)
-- **Timezone**: UTC with automatic conversion to your local timezone
+- **Timezone**: events are written in the calendar's default timezone (CalDAV `calendar-timezone` property, e.g. set by Nextcloud), falling back to the device timezone, then UTC
 
 ## 🐛 Troubleshooting
 
@@ -198,7 +198,7 @@ window.CalDAVSync.manualSync()                   // Run a full manual sync
 - **Single Source of Truth**: Use a dedicated calendar only for Super Productivity — the manual sync deletes `sp-task-*.ics` events that no longer belong to a scheduled task
 - **Backup**: Create backups of your calendar before the first test
 - **Desktop Version**: Recommended due to CORS restrictions in browsers
-- **Retry queue**: The queue is held in memory; after an app restart, run a manual sync to bring the calendar back in line
+- **Retry queue**: Failed requests are retried automatically every ~45 s and when the connection returns. The queue is held in memory; after an app restart, run a manual sync to bring the calendar back in line
 
 ## 📄 License
 

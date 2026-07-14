@@ -5,6 +5,7 @@ import { createEventFromTask } from './ical/build.ts';
 import { deleteCalDAVEvent, listCalDAVTaskIds, putCalDAVEvent } from './caldav/client.ts';
 import { pendingOps } from './sync/queue.ts';
 import { pollTick } from './sync/poll.ts';
+import { getEventTimezone } from './caldav/timezone.ts';
 
 // Runs worker(item) for all items with limited concurrency; workers must
 // handle their own errors
@@ -103,12 +104,13 @@ export async function manualSync(): Promise<void> {
     let errors = 0;
     let firstError: string | null = null;
 
+    const tz = await getEventTimezone(config);
     await runPool(tasksToSync, 3, async (task) => {
       try {
         await putCalDAVEvent(
           config,
           eventUidForTask(task),
-          createEventFromTask(task, config),
+          createEventFromTask(task, config, tz),
         );
         pendingOps.delete(task.id);
         synced++;
