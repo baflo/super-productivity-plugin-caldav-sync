@@ -12,6 +12,7 @@ import {
   snacks,
   configStore,
   task,
+  updateTaskCalls,
 } from './helpers.ts';
 
 installStubs();
@@ -85,6 +86,60 @@ test('error summary includes first error detail with HTTP status', async () => {
   assert.equal(snacks[0].type, 'ERROR');
   assert.match(snacks[0].msg, /1 errors \(first: CalDAV PUT failed: 401 Unauthorized\)/);
   assert.equal(pendingOps.get('e1'), 'put');
+});
+
+test('manual sync with two-way: pulls calendar edits BEFORE pushing, push uses imported values', async () => {
+  configStore.twoWaySync = true;
+  tasksStore.push(task({ id: 't1', title: 'Alt', dueDay: '2026-07-14' }));
+  const editedIcs = [
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    'UID:sp-task-t1',
+    'SUMMARY:Kalender-Titel',
+    'DTSTART;VALUE=DATE:20260714',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
+
+  setFetchImpl(async (url, opts = {}) => {
+    if (opts.method === 'PROPFIND') {
+      const depth = (opts.headers as Record<string, string>)?.Depth;
+      if (depth === '0') {
+        return okResponse(
+          207,
+          '<d:multistatus xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/">' +
+            '<d:response><d:href>/cal/</d:href><d:propstat><d:prop><cs:getctag>c1</cs:getctag></d:prop>' +
+            '<d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>',
+        );
+      }
+      return okResponse(
+        207,
+        '<d:multistatus xmlns:d="DAV:"><d:response><d:href>/cal/sp-task-t1.ics</d:href>' +
+          '<d:propstat><d:prop><d:getetag>"e1"</d:getetag></d:prop>' +
+          '<d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>',
+      );
+    }
+    if (opts.method === 'GET' || opts.method === undefined) {
+      return okResponse(200, editedIcs, { ETag: '"e1"' });
+    }
+    return okResponse();
+  });
+
+  await manualSync();
+
+  // 1) the calendar edit was imported…
+  assert.equal(updateTaskCalls.length, 1);
+  assert.equal(updateTaskCalls[0][1].title, 'Kalender-Titel');
+  // 2) …and the push that followed used the imported title, not the stale one
+  const puts = fetchCalls.filter(([, o]) => o.method === 'PUT');
+  assert.equal(puts.length, 1);
+  assert.match(String(puts[0][1].body), /SUMMARY:Kalender-Titel/);
+  assert.doesNotMatch(String(puts[0][1].body), /SUMMARY:Alt/);
+  // 3) pull happened before the push (request order)
+  const methods = fetchCalls.map(([, o]) => o.method);
+  assert.ok(methods.indexOf('GET') < methods.indexOf('PUT'), 'pull before push');
+  // 4) summary mentions the import
+  assert.match(snacks[0].msg, /1 calendar edits imported/);
 });
 
 test('disabled config yields explanatory snack and no requests', async () => {

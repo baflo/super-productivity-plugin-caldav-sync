@@ -80,6 +80,7 @@ imports calendar-side edits into the matching task:
 ### Manual Synchronization
 
 Open the main menu (burger menu) and click the **"CalDAV Sync"** entry to:
+- Import pending calendar edits first (when two-way sync is enabled)
 - Synchronize all scheduled tasks
 - Remove orphaned events (`sp-task-*.ics` files in the calendar that no longer belong to a scheduled task)
 - Retry previously failed requests

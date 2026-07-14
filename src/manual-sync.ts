@@ -4,6 +4,7 @@ import { eventUidForTask, eventUidForTaskId, shouldDeleteTask, shouldSyncTask } 
 import { createEventFromTask } from './ical/build.ts';
 import { deleteCalDAVEvent, listCalDAVTaskIds, putCalDAVEvent } from './caldav/client.ts';
 import { pendingOps } from './sync/queue.ts';
+import { pollTick } from './sync/poll.ts';
 
 // Runs worker(item) for all items with limited concurrency; workers must
 // handle their own errors
@@ -82,6 +83,19 @@ export async function manualSync(): Promise<void> {
   }
 
   try {
+    // Pull FIRST: import pending calendar edits before pushing, otherwise the
+    // push would overwrite them with the (older) task state.
+    let imported = 0;
+    if (config.twoWaySync) {
+      try {
+        const pullStats = await pollTick(config);
+        imported = pullStats.imported;
+      } catch (error) {
+        console.warn('[CalDAV Sync] Pull during manual sync failed:', error);
+      }
+    }
+
+    // getTasks AFTER the pull so the push sees the imported values
     const tasks = await PluginAPI.getTasks();
     const tasksToSync = tasks.filter(shouldSyncTask);
 
@@ -114,6 +128,7 @@ export async function manualSync(): Promise<void> {
     }
 
     const msgParts = [`${synced} tasks synchronized`];
+    if (imported > 0) msgParts.push(`${imported} calendar edits imported`);
     if (orphansRemoved > 0) msgParts.push(`${orphansRemoved} orphaned events removed`);
     if (errors > 0) msgParts.push(`${errors} errors (first: ${firstError})`);
     PluginAPI.showSnack({
