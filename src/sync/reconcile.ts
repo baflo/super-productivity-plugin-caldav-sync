@@ -9,7 +9,7 @@
  */
 import type { CalDAVConfig, Task } from '../types.ts';
 import { eventUidForTask, eventUidForTaskId, shouldDeleteTask, shouldSyncTask } from '../rules.ts';
-import { createEventFromTask } from '../ical/build.ts';
+import { createEventFromTask, rebuildEventFromRaw } from '../ical/build.ts';
 import { parseVEvent, type ParsedVEvent } from '../ical/parse.ts';
 import {
   dayStrFromEpoch,
@@ -31,6 +31,7 @@ import {
   dropRecord,
   getRecord,
   loadPullState,
+  rawForRecord,
   savePullState,
   setRecord,
   type TaskRecord,
@@ -143,12 +144,32 @@ async function writeEventCAS(
     breakOscillation(task.id, 'write', task.title);
     return 'skipped';
   }
-  const tz = await getEventTimezone(config);
-  const ics = createEventFromTask(taskWithSemantic(task, sem), config, tz);
   const uid = eventUidForTask(task);
+
+  // Read-modify-write basis: the raw lines of the version we If-Match
+  // against. When missing (older record / echo adoption), fetch it so
+  // foreign properties (LOCATION, user alarms, X-props) survive our write.
+  let rawLines = record.raw ?? null;
+  if (!rawLines && record.etag && !record.gone) {
+    const current = await getCalDAVEvent(config, uid);
+    if (current) {
+      if (current.etag && current.etag !== record.etag) {
+        trace('RMW pre-GET found newer version', task.id);
+        return null; // concurrent change — caller reconciles
+      }
+      rawLines = parseVEvent(current.ics)?.rawLines ?? null;
+    }
+  }
+
+  const tz = await getEventTimezone(config);
+  const outTask = taskWithSemantic(task, sem);
+  const ics =
+    rawLines && rawLines.length > 0
+      ? rebuildEventFromRaw(rawLines, outTask, config, tz)
+      : createEventFromTask(outTask, config, tz);
   const opts =
     record.etag && !record.gone ? { ifMatch: record.etag } : { ifNoneMatch: true };
-  trace('PUT', task.id, opts, 'schedule:', scheduleKey(sem));
+  trace('PUT', task.id, opts, 'schedule:', scheduleKey(sem), 'rmw:', !!rawLines);
   try {
     const result = await putCalDAVEvent(config, uid, ics, opts);
     let etag = result.etag ?? null;
@@ -157,7 +178,12 @@ async function writeEventCAS(
       etag = (await getCalDAVEvent(config, uid))?.etag ?? null;
     }
     recordTransition(task.id, 'write', scheduleKey(sem));
-    return { etag, snap: sem, gone: false };
+    return {
+      etag,
+      snap: sem,
+      gone: false,
+      raw: rawForRecord(parseVEvent(ics)?.rawLines),
+    };
   } catch (error) {
     if (error instanceof PreconditionFailedError) {
       trace('PUT 412', task.id);
@@ -350,7 +376,7 @@ export async function reconcileWithRemote(
   // only adopt the ETag so it stops showing up as changed.
   if (task && !shouldSyncTask(task) && !shouldDeleteTask(task, config)) {
     if (fetched?.etag && fetched.etag !== record.etag) {
-      setRecord(state, taskId, { ...record, etag: fetched.etag, gone: false });
+      setRecord(state, taskId, { ...record, etag: fetched.etag, gone: false, raw: null });
       savePullState(state);
     }
     if (stats) stats.unchanged++;
@@ -373,7 +399,13 @@ export async function reconcileWithRemote(
       remoteChanged = false;
     } else if (semanticEqual(remote, record.snap)) {
       // Another client wrote identical content — adopt the ETag silently
-      setRecord(state, taskId, { ...record, etag: fetched.etag ?? record.etag, gone: false });
+      // (and its raw lines: their version may carry different foreign props)
+      setRecord(state, taskId, {
+        ...record,
+        etag: fetched.etag ?? record.etag,
+        gone: false,
+        raw: rawForRecord(parsed?.rawLines),
+      });
       savePullState(state);
       remoteChanged = false;
     } else {
@@ -422,6 +454,7 @@ export async function reconcileWithRemote(
         etag: fetched.etag ?? null,
         snap: remote as Semantic,
         gone: false,
+        raw: rawForRecord(parsed?.rawLines),
       });
       savePullState(state);
     }
@@ -502,6 +535,7 @@ export async function reconcileWithRemote(
       ...record,
       etag: fetched.etag ?? record.etag,
       gone: false,
+      raw: rawForRecord(parsed?.rawLines) ?? record.raw,
     });
     if (written === 'skipped') return; // breaker: skip both sides this round
     if (!written) {
@@ -519,6 +553,7 @@ export async function reconcileWithRemote(
       etag: fetched.etag ?? null,
       snap: merged,
       gone: false,
+      raw: rawForRecord(parsed?.rawLines),
     });
     savePullState(state);
   }

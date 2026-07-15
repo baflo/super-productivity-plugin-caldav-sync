@@ -19,8 +19,16 @@
   `gone`, semantic idempotence on every push (unchanged tasks produce zero
   requests). Already delivered from this phase's plan ahead of Phase 3:
   echo adoption of identical writes from other clients.
-- **Phase 3 — multi-writer hardening**: read-modify-write with property
-  preservation and the `X-SP-CALDAV` VALARM marker; poll jitter exists.
+- **Phase 3 — multi-writer hardening** ✅ (v2.6.0): read-modify-write —
+  records cache the raw VEVENT lines of the version their ETag identifies;
+  writes rebuild from that basis so foreign properties (LOCATION, categories,
+  X-props, user-added alarms) survive, with a pre-write GET when the raw
+  basis is missing (migrated/echo-adopted records). The plugin's own VALARM
+  carries the `X-SP-CALDAV:1` marker and is the only alarm it replaces
+  (legacy unmarked alarms whose DESCRIPTION equals the previous SUMMARY are
+  adopted). Known limit: foreign properties referencing third-party TZIDs
+  (e.g. RDATE with an exotic zone) are preserved verbatim but their
+  VTIMEZONE is not re-embedded.
 - **Phase 4 — polish + migration**: manual sync as full reconcile (today:
   pull tick + CAS push + orphan cleanup), upstream proposal for a plugin
   scheduling API.

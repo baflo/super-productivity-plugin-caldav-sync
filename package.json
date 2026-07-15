@@ -1,6 +1,6 @@
 {
   "name": "super-productivity-plugin-caldav-sync",
-  "version": "2.5.2",
+  "version": "2.6.0",
   "description": "Super Productivity plugin that syncs scheduled tasks to a CalDAV calendar",
   "private": true,
   "type": "module",

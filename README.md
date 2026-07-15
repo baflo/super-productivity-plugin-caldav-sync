@@ -75,6 +75,9 @@ imports calendar-side edits into the matching task:
   with a warning notification
 - **Safe writes**: every write uses HTTP `If-Match`, so the plugin can never
   blindly overwrite a concurrent calendar change — conflicts are detected and merged
+- **Polite writes**: updates preserve everything other calendar apps added to
+  an event (location, categories, their own reminders, custom properties) —
+  only the task-owned fields (title, time, description) are rewritten
 - **Not imported**: reminders/alarms (write-only, from plugin config), completion, deletion —
   an event deleted in the calendar is *not* re-created automatically, but reappears
   when the task changes or on the next manual sync

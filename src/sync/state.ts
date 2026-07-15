@@ -14,6 +14,9 @@ export interface TaskRecord {
   etag: string | null;
   snap: Semantic | null;
   gone: boolean;
+  /** Unfolded VEVENT lines of the version identified by `etag` — the basis
+   * for read-modify-write so foreign properties survive our updates. */
+  raw?: string[] | null;
 }
 
 export interface PullState {
@@ -92,7 +95,17 @@ export function savePullState(state: PullState): void {
 }
 
 export function getRecord(state: PullState, taskId: string): TaskRecord {
-  return state.records[taskId] ?? { etag: null, snap: null, gone: false };
+  return state.records[taskId] ?? { etag: null, snap: null, gone: false, raw: null };
+}
+
+const MAX_RAW_CHARS = 16384;
+
+/** Raw VEVENT lines for caching in a record, size-capped */
+export function rawForRecord(rawLines: readonly string[] | undefined | null): string[] | null {
+  if (!rawLines || rawLines.length === 0) return null;
+  let total = 0;
+  for (const line of rawLines) total += line.length + 2;
+  return total <= MAX_RAW_CHARS ? [...rawLines] : null;
 }
 
 export function setRecord(state: PullState, taskId: string, record: TaskRecord): void {

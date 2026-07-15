@@ -245,6 +245,17 @@ test('stale hook payload: push re-reads the task and keeps a just-imported time'
     },
   });
 
+  // Server still holds the version our record's ETag describes (RMW pre-GET)
+  const serverIcs = ICS([
+    'SUMMARY:Alt',
+    'DTSTART:20260723T140000Z',
+    'DTEND:20260723T150000Z',
+  ]);
+  setFetchImpl(async (_url, opts = {}) => {
+    if (opts.method === 'GET') return okResponse(200, serverIcs, { ETag: '"e2"' });
+    return okResponse();
+  });
+
   // The hook payload still carries the PRE-import snapshot (old time):
   const stalePayloadTask = task({
     id: 'x',
