@@ -88,12 +88,15 @@ imports calendar-side edits into the matching task:
 
 ### Manual Synchronization
 
-Open the main menu (burger menu) and click the **"CalDAV Sync"** entry to:
-- Import pending calendar edits first (when two-way sync is enabled)
-- Synchronize all scheduled tasks
-- Remove orphaned events (`sp-task-*.ics` files in the calendar that no longer belong to a scheduled task)
-- Retry previously failed requests
-- See a summary notification
+Open the main menu (burger menu) and click the **"CalDAV Sync"** entry to run
+a **full reconcile**: every task/event pairing is checked in one pass —
+- local changes are pushed, calendar edits imported (when two-way sync is enabled)
+- events deleted from the calendar are recreated (with their preserved extras)
+- orphaned `sp-task-*.ics` events are removed
+- previously failed requests are retried, and a summary notification is shown
+
+With two-way sync disabled, the full sync treats Super Productivity as the
+single source of truth and restores the calendar to match it.
 
 ## 🔍 Which tasks are synchronized?
 

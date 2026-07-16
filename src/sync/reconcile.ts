@@ -276,6 +276,66 @@ export async function pushLocalChange(config: CalDAVConfig, taskSnapshot: Task):
   return true;
 }
 
+/**
+ * Recreate a missing event (manual full sync): the record's cached raw lines
+ * are used as RMW basis so foreign props of the deleted event survive the
+ * resurrection. An event appearing concurrently (If-None-Match 412) is
+ * reconciled instead.
+ */
+export async function recreateEvent(config: CalDAVConfig, taskSnapshot: Task): Promise<boolean> {
+  const task = (await freshTask(taskSnapshot.id, taskSnapshot)) as Task;
+  if (!shouldSyncTask(task)) return false;
+  const desired = semanticOfTask(task);
+  if (!desired) return false;
+
+  const state = loadPullState(config.calendarUrl);
+  const record = getRecord(state, task.id);
+  const written = await writeEventCAS(config, task, desired, {
+    ...record,
+    etag: null,
+    gone: true,
+  });
+  if (written === 'skipped') return false;
+  if (written) {
+    setRecord(state, task.id, written);
+    savePullState(state);
+    return true;
+  }
+  const fetched = await getCalDAVEvent(config, eventUidForTask(task));
+  await reconcileWithRemote(config, task, task.id, fetched, undefined, 1);
+  return true;
+}
+
+/**
+ * One-way mode (twoWaySync off) with remote drift: SP is the single source
+ * of truth, so the task state is pushed over the diverged event — but still
+ * via RMW on the CURRENT server version, preserving foreign properties.
+ */
+export async function forcePushTask(config: CalDAVConfig, taskSnapshot: Task): Promise<boolean> {
+  const task = (await freshTask(taskSnapshot.id, taskSnapshot)) as Task;
+  if (!shouldSyncTask(task)) return false;
+  const desired = semanticOfTask(task);
+  if (!desired) return false;
+
+  const state = loadPullState(config.calendarUrl);
+  const record = getRecord(state, task.id);
+  const fetched = await getCalDAVEvent(config, eventUidForTask(task));
+  if (!fetched) return recreateEvent(config, task);
+
+  const written = await writeEventCAS(config, task, desired, {
+    etag: fetched.etag ?? null,
+    snap: record.snap,
+    gone: false,
+    raw: rawForRecord(parseVEvent(fetched.ics)?.rawLines),
+  });
+  if (written && written !== 'skipped') {
+    setRecord(state, task.id, written);
+    savePullState(state);
+    return true;
+  }
+  return false; // 412 race or oscillation breaker — next sync retries
+}
+
 /** Task deleted locally (or completed with deleteCompletedTasks) */
 export async function deleteLocalTask(config: CalDAVConfig, taskId: string): Promise<void> {
   const state = loadPullState(config.calendarUrl);

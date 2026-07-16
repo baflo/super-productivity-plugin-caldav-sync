@@ -29,9 +29,14 @@
   adopted). Known limit: foreign properties referencing third-party TZIDs
   (e.g. RDATE with an exotic zone) are preserved verbatim but their
   VTIMEZONE is not re-embedded.
-- **Phase 4 — polish + migration**: manual sync as full reconcile (today:
-  pull tick + CAS push + orphan cleanup), upstream proposal for a plugin
-  scheduling API.
+- **Phase 4 — polish + migration** ✅ (v2.7.0): manual sync is a full
+  reconcile sweep — every task/event pairing runs through the state machine
+  in one pass (fast path without GET when ETag and snapshot both match),
+  missing events are recreated (from their cached raw basis, preserving
+  foreign props), orphans removed, and the sync token refreshed so the next
+  poll starts clean. One-way mode (twoWaySync off) force-pushes SP state
+  over remote drift, still via RMW. Upstream scheduling-API proposal drafted
+  in `docs/upstream-scheduling-api-proposal.md`.
 
 ## Goals
 
